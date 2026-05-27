@@ -1,0 +1,28 @@
+=== Training Log ===
+Config: {'csv_paths': ['D:/3_document/4_research/smartLoc/dataset/berlin1_potsdamer_platz/RXM-RAWX_processed.csv', 'D:/3_document/4_research/smartLoc/dataset/berlin2_gendarmenmarkt/RXM-RAWX_processed.csv', 'D:/3_document/4_research/smartLoc/dataset/frankfurt1_maintower/RXM-RAWX_processed.csv', 'D:/3_document/4_research/smartLoc/dataset/frankfurt2_westendtower/RXM-RAWX_processed.csv', ''], 'output_dir': 'CNN_Attention_BiLSTM/results', 'model_name': 'nlos_model_balanced.pth', 'log_file': 'training_log.txt', 'seq_len': 10, 'max_gap': 1.5, 'batch_size': 64, 'learning_rate': 0.001, 'epochs': 2, 'hidden_size': 64, 'num_filters': 64, 'dropout': 0.5, 'weight_decay': 0.0001}
+
+使用设备: cpu
+[4/4] 数据平衡与划分...
+✅ 测试集已保存至: CNN_Attention_BiLSTM/results\test_set_balanced.pt
+
+--- 开始训练 ---
+Epoch 1/2 | Loss: 0.3404 | Val F1: 0.8619 | Val Acc: 0.8606
+  🌟 Best Model Saved
+Epoch 2/2 | Loss: 0.3210 | Val F1: 0.8690 | Val Acc: 0.8658
+  🌟 Best Model Saved
+
+--- 训练完成，生成可视化报告 ---
+
+=== 最终测试集报告 (Balanced) ===
+              precision    recall  f1-score   support
+
+         LOS       0.89      0.85      0.87     18404
+        NLOS       0.85      0.89      0.87     18360
+
+    accuracy                           0.87     36764
+   macro avg       0.87      0.87      0.87     36764
+weighted avg       0.87      0.87      0.87     36764
+
+
+✅ 所有任务完成！结果已保存在: CNN_Attention_BiLSTM/results/
+总耗时: 1.7 min

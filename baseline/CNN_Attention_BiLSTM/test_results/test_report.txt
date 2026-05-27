@@ -1,0 +1,21 @@
+=== Test Report ===
+Config: {'model_path': 'results/nlos_model_balanced.pth', 'scaler_path': 'results/global_scalers.pkl', 'test_set_path': 'results/test_set_balanced.pt', 'output_dir': 'test_results', 'log_file': 'test_report.txt', 'viz_csv_path': 'D:/3_document/4_research/smartLoc/dataset/berlin1_potsdamer_platz/RXM-RAWX_processed.csv', 'viz_satellite_id': 'G08', 'seq_len': 10, 'max_gap': 1.5, 'hidden_size': 64, 'num_filters': 64, 'batch_size': 32}
+
+使用设备: cpu
+
+--- 阶段 1: 统计评估 (Balanced Test Set) ---
+              precision    recall  f1-score   support
+
+         LOS       0.88      0.86      0.87     18404
+        NLOS       0.86      0.88      0.87     18360
+
+    accuracy                           0.87     36764
+   macro avg       0.87      0.87      0.87     36764
+weighted avg       0.87      0.87      0.87     36764
+
+
+--- 阶段 2: 时间线可视化 (Raw CSV) ---
+读取文件: D:/3_document/4_research/smartLoc/dataset/berlin1_potsdamer_platz/RXM-RAWX_processed.csv
+选取数据量最多的卫星进行绘图: SV_ID = 19
+
+✅ 测试流程结束！所有结果已保存至: test_results/

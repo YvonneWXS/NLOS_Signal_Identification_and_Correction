@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.pkl
+*.pth
+*.0
+model/part1_GAT/result/
+data/processedData/
+.claude/
+.worktrees/
+worktrees/
+
+# Keep structure
+!data/processedData/.gitkeep
+!model/part1_GAT/result/.gitkeep

@@ -1,0 +1,17 @@
+Device: cpu
+
+--- Start Training (TC CNN-BiLSTM) ---
+Epoch 1 | Loss: 0.3279 | Val F1: 0.8616
+Epoch 2 | Loss: 0.3075 | Val F1: 0.8730
+
+Test Report:
+              precision    recall  f1-score   support
+
+         0.0       0.91      0.83      0.87     13793
+         1.0       0.84      0.91      0.88     13780
+
+    accuracy                           0.87     27573
+   macro avg       0.87      0.87      0.87     27573
+weighted avg       0.87      0.87      0.87     27573
+
+Done. Time: 1.7 min
