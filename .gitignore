@@ -32,3 +32,9 @@ worktrees/
 # Keep structure
 !data/processedData/.gitkeep
 !model/part1_GAT/result/.gitkeep
+
+# Temp/dev files
+_git_backup/
+_*.py
+*.ascii
+*.backup
