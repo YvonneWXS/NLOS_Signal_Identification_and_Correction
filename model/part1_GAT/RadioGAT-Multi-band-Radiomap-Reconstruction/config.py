@@ -73,8 +73,8 @@ class Config:
     USE_MIXTURE_GAUSSIAN = True
 
     # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 10  # shortened: 30→10
-    MOG_BLEND_EPOCHS = 40  # extended: 25→40
+    MOG_PURE_BCE_EPOCHS = 15  # extended: 10→15 for backbone convergence
+    MOG_BLEND_EPOCHS = 35  # adjusted: 40→35 to fit 100ep total
     # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
