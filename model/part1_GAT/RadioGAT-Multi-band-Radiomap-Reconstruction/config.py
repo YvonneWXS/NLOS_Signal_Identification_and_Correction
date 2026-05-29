@@ -73,17 +73,17 @@ class Config:
     USE_MIXTURE_GAUSSIAN = True
 
     # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 30
-    MOG_BLEND_EPOCHS = 25
+    MOG_PURE_BCE_EPOCHS = 10  # shortened: 30→10
+    MOG_BLEND_EPOCHS = 40  # extended: 25→40
     # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
-    SIGMA_NLOS_MIN = 2.0
+    SIGMA_NLOS_MIN = 0.05  # lowered to match new clamp
     SIGMA_NLOS_MAX = 200.0
-    LAMBDA_MU_REG = 0.001
-    LAMBDA_SIGMA_REG = 0.001
-    SIGMA_GAP_TARGET = 0.3
-    LAMBDA_SIGMA_SEP = 2.0
+    LAMBDA_MU_REG = 0.005  # 5x stronger: 0.001→0.005
+    LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001→0.01
+    SIGMA_GAP_TARGET = 0.5  # increased: 0.3→0.5 km
+    LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0→5.0
 
     # ========== Graph Construction Config ==========
     AZIMUTH_THRESHOLD = 90

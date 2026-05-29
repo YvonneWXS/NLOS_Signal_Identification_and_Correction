@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 GAT_V2025.py -- NLOS Perception GAT Main File
 ==============================================
@@ -155,7 +155,7 @@ class NLOSGAT(nn.Module):
         """Initialize output heads to avoid activation saturation."""
         nn.init.constant_(self.p_los_head.bias, -0.5)
         nn.init.normal_(self.p_los_head.weight, mean=0.0, std=0.01)
-        nn.init.constant_(self.mu_nlos_head.bias, 3.91)
+        nn.init.constant_(self.mu_nlos_head.bias, -2.0)  # softplus(-2.0) ≈ 0.127 km
         nn.init.normal_(self.mu_nlos_head.weight, mean=0.0, std=0.01)
         nn.init.constant_(self.log_sigma_los_head.bias, -6.0)
         nn.init.normal_(self.log_sigma_los_head.weight, mean=0.0, std=0.01)
@@ -198,7 +198,7 @@ class NLOSGAT(nn.Module):
         p_los = torch.sigmoid(self.p_los_head(h))
         mu_nlos_raw = self.mu_nlos_head(h)
         mu_nlos = F.softplus(mu_nlos_raw)
-        mu_nlos = torch.clamp(mu_nlos, 0.0, 3.0)
+        mu_nlos = torch.clamp(mu_nlos, 0.0, 500.0)  # match MU_NLOS_MAX
         log_sigma_los = self.log_sigma_los_head(h)
         log_sigma_nlos = self.log_sigma_nlos_head(h)
 
@@ -349,8 +349,8 @@ class MoGNLLLoss(nn.Module):
         log_sigma_nlos = log_sigma_nlos.squeeze()
         err = pseudorange_error.squeeze()
         p_safe = torch.clamp(p_los, self.eps, 1.0-self.eps)
-        sigma_los = torch.clamp(torch.exp(log_sigma_los), 0.001, 5.0)
-        sigma_nlos = torch.clamp(torch.exp(log_sigma_nlos), 0.01, 5.0)
+        sigma_los = torch.clamp(torch.exp(log_sigma_los), 0.01, 50.0)  # widened: was [0.001,5.0]
+        sigma_nlos = torch.clamp(torch.exp(log_sigma_nlos), 0.05, 150.0)  # widened: was [0.01,5.0]
         log_prob_los = -0.5*(err/(sigma_los+self.eps))**2 - torch.log(sigma_los+self.eps) - 0.5*_m.log(2*_m.pi)
         log_prob_nlos = -0.5*((err-mu_nlos)/(sigma_nlos+self.eps))**2 - torch.log(sigma_nlos+self.eps) - 0.5*_m.log(2*_m.pi)
         lp_los = torch.log(p_safe) + log_prob_los
@@ -374,6 +374,9 @@ class MoGNLLLoss(nn.Module):
             if lm.any() and nm.any():
                 gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
                 total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
+        # Sigma centering: soft pull toward physical ranges
+        sigma_center_loss = ((sigma_los - 0.2).pow(2).mean() + (sigma_nlos - 0.8).pow(2).mean()) * 0.005
+        total_loss = total_loss + sigma_center_loss
 
         if return_components:
             lm = (nlos_label.squeeze()==0); nm = (nlos_label.squeeze()==1)
@@ -409,8 +412,8 @@ class SupervisedComponentNLLLoss(nn.Module):
         err = pseudorange_error.squeeze()
         nl = nlos_label.squeeze()
 
-        sigma_los = torch.clamp(torch.exp(log_sigma_los), 0.001, 5.0)
-        sigma_nlos = torch.clamp(torch.exp(log_sigma_nlos), 0.01, 5.0)
+        sigma_los = torch.clamp(torch.exp(log_sigma_los), 0.01, 50.0)  # widened: was [0.001,5.0]
+        sigma_nlos = torch.clamp(torch.exp(log_sigma_nlos), 0.05, 150.0)  # widened: was [0.01,5.0]
 
         los_mask = (nl == 0)
         nlos_mask = (nl == 1)
@@ -555,7 +558,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
         for p in model.mu_nlos_head.parameters(): p.requires_grad = True
         for p in model.log_sigma_los_head.parameters(): p.requires_grad = True
         for p in model.log_sigma_nlos_head.parameters(): p.requires_grad = True
-    lam = 1.0 - (epoch - mog_pure_bce_epochs) / max(mog_blend_epochs, 1) if is_blend else 0.0
+    lam = 0.5 * (1 + math.cos(math.pi * (epoch - mog_pure_bce_epochs) / max(mog_blend_epochs, 1))) if is_blend else 0.0  # cosine schedule
     all_p_los = []
     all_log_sigma = []
 
@@ -604,6 +607,10 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             if is_pure_bce:
                 loss, components = nlos_loss_bce(p_los, log_sigma_nlos, pseudorange_errors,
                                     nlos_labels, elevation=elevation_deg, return_components=True)
+                # Light L2 supervision: pull mu_nlos toward 0.15 km during BCE warmup
+                mu_reg = 0.001 * (mu_nlos - 0.15).pow(2).mean()
+                loss = loss + mu_reg
+                components['mu_reg'] = mu_reg.item()
             elif is_blend:
                 bce_loss_fn = bce_only_loss if bce_only_loss is not None else nlos_loss_bce
                 loss_bce, comps_bce = bce_loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
@@ -758,6 +765,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
     all_p_los_vals = []
     all_nlos_labels_vals = []
     all_log_sigma_vals = []
+    all_mu_nlos_vals = []
+    all_sigma_los_vals_from_model = []
     all_elevations = []
     num_batches = 0
 
@@ -827,6 +836,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
             all_p_los_vals.extend(p_los_np.flatten().tolist())
             all_nlos_labels_vals.extend(nlos_lab.flatten().tolist())
             all_log_sigma_vals.extend(log_sigma_nlos_np.flatten().tolist())
+            all_mu_nlos_vals.extend(mu_nlos_np.flatten().tolist())
+            all_sigma_los_vals_from_model.extend(torch.exp(log_sigma_los).squeeze().cpu().numpy().flatten().tolist())
             all_elevations.extend(elev_np.flatten().tolist())
 
     if all_preds and all_labels:
@@ -884,17 +895,40 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
             metrics['elev_neg_count'] = int(neg_mask.sum())
             metrics['elev_neg_p_los_mean'] = float(np.mean(p_los_arr_all[neg_mask]))
 
+    # MoG-specific metrics
+    if all_mu_nlos_vals:
+        mu_arr = np.array(all_mu_nlos_vals)
+        metrics['mu_nlos_mean'] = float(np.mean(mu_arr))
+        metrics['mu_nlos_std'] = float(np.std(mu_arr))
+        metrics['mu_nlos_max'] = float(np.max(mu_arr))
+    if all_sigma_los_vals_from_model:
+        sl_arr = np.array(all_sigma_los_vals_from_model)
+        metrics['sigma_los_mean'] = float(np.mean(sl_arr))
+        metrics['sigma_nlos_from_model_mean'] = float(np.mean(sigma_arr)) if len(all_log_sigma_vals) else 0
+        if len(all_nlos_labels_vals) == len(all_sigma_los_vals_from_model):
+            nlab = np.array(all_nlos_labels_vals)
+            sl_los = sl_arr[nlab == 0]; sl_nlos = sl_arr[nlab == 1]
+            if len(sl_los) and len(sl_nlos): metrics['sigma_true_gap'] = float(np.mean(sl_nlos) - np.mean(sl_los))
+
     return metrics
 
 
 def create_optimizer_and_scheduler(model: nn.Module, config: Config):
     """Create optimizer and learning rate scheduler"""
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.LEARNING_RATE,
-        weight_decay=1e-3,
-        eps=1e-8
-    )
+    # Separate param groups: p_los head gets higher LR for faster classification convergence
+    p_los_params = list(model.p_los_head.parameters())
+    mu_nlos_params = list(model.mu_nlos_head.parameters())
+    sigma_los_params = list(model.log_sigma_los_head.parameters())
+    sigma_nlos_params = list(model.log_sigma_nlos_head.parameters())
+    excluded_ids = set(id(p) for p in (p_los_params + mu_nlos_params + sigma_los_params + sigma_nlos_params))
+    other_params = [p for p in model.parameters() if id(p) not in excluded_ids]
+    optimizer = torch.optim.AdamW([
+        {'params': p_los_params, 'lr': config.LEARNING_RATE * 2},       # 1e-4
+        {'params': mu_nlos_params, 'lr': config.LEARNING_RATE},         # 5e-5
+        {'params': sigma_los_params, 'lr': config.LEARNING_RATE},       # 5e-5
+        {'params': sigma_nlos_params, 'lr': config.LEARNING_RATE},      # 5e-5
+        {'params': other_params, 'lr': config.LEARNING_RATE},           # 5e-5 backbone
+    ], weight_decay=1e-3, eps=1e-8)
     scheduler = None
     if config.USE_LR_SCHEDULER:
         scheduler = ReduceLROnPlateau(
@@ -1147,6 +1181,14 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
             if val_metrics['p_los_max'] > 0.85:
                 print(f"  *** WARNING: p_los max={val_metrics['p_los_max']:.3f} > 0.85, "
                       f"model may be collapsing toward LOS ***")
+            if 'mu_nlos_mean' in val_metrics:
+                mog_parts = [f"mu_nlos=[{val_metrics['mu_nlos_mean']:.4f}"]
+                if 'sigma_los_mean' in val_metrics:
+                    mog_parts.append(f"sigma_los={val_metrics['sigma_los_mean']:.4f}")
+                if 'sigma_true_gap' in val_metrics:
+                    mog_parts.append(f"sigma_gap={val_metrics['sigma_true_gap']:.4f}")
+                mog_parts.append("]")
+                print(f"  MoG: " + " ".join(mog_parts))
 
         if writer is not None:
             try:
@@ -1167,6 +1209,12 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
                     writer.add_scalar('Val/sigma_mean', val_metrics['sigma_mean'], step)
                 if 'elev_neg_p_los_mean' in val_metrics:
                     writer.add_scalar('Val/elev_neg_p_los_mean', val_metrics['elev_neg_p_los_mean'], step)
+                    if 'mu_nlos_mean' in val_metrics:
+                        writer.add_scalar('Val/mu_nlos_mean', val_metrics['mu_nlos_mean'], step)
+                    if 'sigma_los_mean' in val_metrics:
+                        writer.add_scalar('Val/sigma_los_mean', val_metrics['sigma_los_mean'], step)
+                    if 'sigma_true_gap' in val_metrics:
+                        writer.add_scalar('Val/sigma_true_gap', val_metrics['sigma_true_gap'], step)
                 writer.add_scalar('LR', lr, step)
 
                 if (epoch + 1) % config.LOG_HISTOGRAM_EPOCHS == 0:
