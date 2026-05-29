@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-GAT_V2026.py -- NLOS Perception GAT Main File
+GAT_V2025.py -- NLOS Perception GAT Main File
 ==============================================
 Part 1: Model Definition -- GATLayer + NLOSGAT
-Part 2: Loss Function    -- NLOSLoss (BCE + Heteroscedastic Uncertainty + Entropy)
+Part 2: Loss Function    -- NLOSLoss (BCE + Uncertainty + Entropy)
 Part 3: Training         -- Dataset + train_epoch + evaluate
 Part 4: Main Entry       -- main() training orchestration
 
-Current mode: BCE + Heteroscedastic Uncertainty (USE_MIXTURE_GAUSSIAN=False)
-
-Recovered from GAT_V2025.py.backup + GAT_V2025.py (Codex-repaired version).
-Key improvements over original:
-  - torch.cuda.amp -> torch.amp (PyTorch 2.x native API)
-  - GradScaler('cuda') with explicit device
-  - autocast('cuda') with explicit device
-  - Auto-resume from latest checkpoint in experiment dir
-  - Clean English docstrings (original Chinese was mojibake)
-  - p_los/log_sigma float conversion after autocast for numerical stability
+Current mode: BCE + Uncertainty (USE_MIXTURE_GAUSSIAN=False)
 """
 
 import os
@@ -43,6 +34,7 @@ from NodeFeature_Generate import (
 )
 from Depth_Adj_Generate import build_azimuth_graph
 
+
 def _safe_torch_save(obj, path):
     """Save using BytesIO buffer to avoid sandbox issues with torch.save."""
     buf = io.BytesIO()
@@ -50,12 +42,14 @@ def _safe_torch_save(obj, path):
     with open(path, "wb") as f:
         f.write(buf.getvalue())
 
+
 # ============================================================
 # Part 1: Model Definition
 # ============================================================
 
+
 class GATLayer(nn.Module):
-    """Graph Attention Layer (custom implementation, no torch-geometric dependency)"""
+    """Graph Attention Layer (preserves original RadioGAT custom style)"""
 
     def __init__(self, in_features: int, out_features: int, heads: int = 4,
                  dropout: float = 0.1, concat: bool = True):
@@ -75,7 +69,6 @@ class GATLayer(nn.Module):
         nn.init.xavier_uniform_(self.att.data)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """Vectorized forward (v2026 block-diagonal batching)."""
         if x.dim() == 1:
             x = x.unsqueeze(0)
 
@@ -83,20 +76,18 @@ class GATLayer(nn.Module):
         h = self.heads
         out_dim = self.out_features
 
-        x_hat = torch.mm(x, self.W).view(N, h, out_dim)      # (N, H, D)
-        out = torch.zeros(N, h, out_dim, device=x.device, dtype=x_hat.dtype)
+        x_hat = torch.mm(x, self.W).view(N, h, out_dim)
+        out = torch.zeros(N, h, out_dim, device=x.device)
 
         if edge_index.size(1) > 0:
-            att_weight = F.softmax(self.att.view(-1), dim=0) # (2*D,)
-
-            src = edge_index[0].long()                       # (E,)
-            dst = edge_index[1].long()                       # (E,)
-            mask = (src < N) & (dst < N)
-            src, dst = src[mask], dst[mask]
-
-            for head_idx in range(h):
-                msgs = x_hat[src, head_idx, :] * att_weight[head_idx]
-                out[:, head_idx, :].index_add_(0, dst, msgs)
+            att_weight = F.softmax(self.att.view(-1), dim=0)
+            for i in range(edge_index.size(1)):
+                src, dst = int(edge_index[0, i]), int(edge_index[1, i])
+                if src >= N or dst >= N:
+                    continue
+                for head_idx in range(h):
+                    w = att_weight[head_idx].item()
+                    out[dst, head_idx, :] += w * x_hat[src, head_idx, :]
         else:
             out = x_hat
 
@@ -105,6 +96,8 @@ class GATLayer(nn.Module):
         else:
             out = torch.mean(out, dim=1)
         return out
+
+
 class NLOSGAT(nn.Module):
     """
     NLOS Perception GAT Network
@@ -154,14 +147,9 @@ class NLOSGAT(nn.Module):
         self._init_output_layers()
 
     def _init_output_layers(self):
-        """Initialize output heads to avoid activation saturation.
-
-        p_los_head: bias=-0.5 -> sigmoid(-0.5) ~= 0.38, NLOS-skeptical start
-        uncertainty_head: bias=0.0 -> log_sigma ~= 0, sigma ~= 1.0 km
-        """
+        """Initialize output heads to avoid activation saturation"""
         nn.init.constant_(self.p_los_head.bias, -0.5)
         nn.init.normal_(self.p_los_head.weight, mean=0.0, std=0.01)
-
         nn.init.constant_(self.uncertainty_head.bias, 0.0)
         nn.init.normal_(self.uncertainty_head.weight, mean=0.0, std=0.01)
 
@@ -203,19 +191,17 @@ class NLOSGAT(nn.Module):
 
         return p_los, log_sigma
 
+
 # ============================================================
 # Part 2: Loss Function
 # ============================================================
 
+
 class NLOSLoss(nn.Module):
     """
-    BCE + Heteroscedastic Uncertainty + Entropy Regularization
+    BCE + Heteroscedastic Uncertainty + Entropy regularization
 
-    BCE:           weighted BCE on p_los (weight=pos_weight for NLOS)
-    Uncertainty:   heteroscedastic regression loss (Gaussian NLL with log_sigma)
-    Entropy:       entropy regularization to prevent p_los collapsing to 0 or 1
-
-    L_total = lambda_bce * L_BCE + lambda_unc * L_uncertainty - lambda_entropy * H(p_los)
+    L_total = lambda_bce * L_BCE + L_uncertainty - lambda_entropy * H(p_los)
     """
 
     def __init__(self, pos_weight: float = 1.07,
@@ -250,17 +236,14 @@ class NLOSLoss(nn.Module):
         pseudorange_error = pseudorange_error.squeeze()
         nlos_label = nlos_label.squeeze()
 
-        # Class imbalance weights
         weights = torch.where(nlos_label == 1,
                               torch.tensor(self.pos_weight, device=p_los.device),
                               torch.tensor(1.0, device=p_los.device))
 
-        # Target: p_los -> 1 for LOS (label=0), p_los -> 0 for NLOS (label=1)
         target_los = 1.0 - nlos_label
         if self.label_smoothing > 0:
             target_los = target_los * (1.0 - self.label_smoothing) + 0.5 * self.label_smoothing
 
-        # 1. BCE loss (with p_los smoothing to prevent gradient starvation)
         p_los_smooth = p_los * (1.0 - self.p_los_smoothing) + 0.5 * self.p_los_smoothing
         bce = F.binary_cross_entropy(
             torch.clamp(p_los_smooth, self.eps, 1.0 - self.eps),
@@ -268,7 +251,6 @@ class NLOSLoss(nn.Module):
             weight=weights.detach()
         )
 
-        # 2. Heteroscedastic uncertainty loss (Gaussian NLL)
         sigma = torch.exp(log_sigma)
         sigma = torch.clamp(sigma, self.eps, 1e6)
         per_sample_unc = 0.5 * torch.log(sigma ** 2) + \
@@ -277,18 +259,15 @@ class NLOSLoss(nn.Module):
 
         total_loss = self.lambda_bce * bce + self.lambda_unc * uncertainty_loss
 
-        # 3. Entropy regularization: penalize p_los collapsing to 0 or 1
         entropy = None
         if self.lambda_entropy > 0:
             p_clamped = torch.clamp(p_los, self.eps, 1.0 - self.eps)
             entropy = -(p_clamped * torch.log(p_clamped) + (1.0 - p_clamped) * torch.log(1.0 - p_clamped))
             total_loss = total_loss - self.lambda_entropy * entropy.mean()
 
-        # log_sigma L2 regularization: gentle penalty against extreme log_sigma
         log_sigma_reg = 0.001 * (log_sigma ** 2).mean()
         total_loss = total_loss + log_sigma_reg
 
-        # Elevation physical prior: penalize high p_los for below-horizon satellites
         elev_neg_count = 0
         elev_neg_p_los_mean = 0.0
         if elevation is not None and self.lambda_elevation_prior > 0:
@@ -325,56 +304,19 @@ class NLOSLoss(nn.Module):
             return total_loss, components
         return total_loss
 
+
 # ============================================================
 # Part 3: Training & Evaluation
 # ============================================================
 
+
 def _extract_elevation(node_features: torch.Tensor) -> torch.Tensor:
-    """Extract raw elevation (degrees) from node features. Dim 0 = elevation/90."""
+    """Extract raw elevation (degrees) from node features -- dim 0 is elevation/90"""
     return node_features[..., 0] * 90.0
 
-def batch_collate_fn(batch):
-    """Block-diagonal collate for variable-size GNSS graphs."""
-    nfs, eis, eas, pes, lbs = [], [], [], [], []
-    offset = 0
-    for nf, ei, ea, pe, lb in batch:
-        N = nf.size(0)
-        if N == 0:
-            continue
-        nfs.append(nf)
-        eis.append(ei + offset)
-        eas.append(ea)
-        pes.append(pe)
-        lbs.append(lb)
-        offset += N
-    if len(nfs) == 0:
-        return (torch.zeros(0, 11), torch.zeros(2, 0, dtype=torch.long),
-                torch.zeros(0), torch.zeros(0), torch.zeros(0))
-    return (torch.cat(nfs, dim=0), torch.cat(eis, dim=1),
-            torch.cat(eas, dim=0), torch.cat(pes, dim=0), torch.cat(lbs, dim=0))
-
-def batch_collate_fn(batch):
-    """Block-diagonal collate for variable-size GNSS graphs."""
-    nfs, eis, eas, pes, lbs = [], [], [], [], []
-    offset = 0
-    for nf, ei, ea, pe, lb in batch:
-        N = nf.size(0)
-        if N == 0:
-            continue
-        nfs.append(nf)
-        eis.append(ei + offset)
-        eas.append(ea)
-        pes.append(pe)
-        lbs.append(lb)
-        offset += N
-    if len(nfs) == 0:
-        return (torch.zeros(0, 11), torch.zeros(2, 0, dtype=torch.long),
-                torch.zeros(0), torch.zeros(0), torch.zeros(0))
-    return (torch.cat(nfs, dim=0), torch.cat(eis, dim=1),
-            torch.cat(eas, dim=0), torch.cat(pes, dim=0), torch.cat(lbs, dim=0))
 
 class GNSDataset(Dataset):
-    """GNSS Graph Dataset: wraps EpochData list into PyTorch Dataset"""
+    """GNSS Graph Dataset -- wraps EpochData list into PyTorch Dataset"""
 
     def __init__(self, epochs_data: List, config: Config):
         self.graph_data = []
@@ -413,6 +355,7 @@ class GNSDataset(Dataset):
             torch.tensor(data['nlos_label'], dtype=torch.float32),
         )
 
+
 def train_epoch(model: nn.Module, dataloader: DataLoader,
                 optimizer: torch.optim.Optimizer,
                 scheduler: Optional[ReduceLROnPlateau],
@@ -424,7 +367,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 global_step: int = 0,
                 scaler: Optional[GradScaler] = None,
                 use_amp: bool = False) -> Dict[str, float]:
-    """Train one epoch with gradient accumulation and AMP support."""
+    """Train one epoch"""
     model.train()
     total_loss = 0.0
     total_bce = 0.0
@@ -435,7 +378,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
     grad_norms_after = []
     all_p_los = []
     all_log_sigma = []
-    total_nodes = 0
 
     optimizer.zero_grad()
 
@@ -444,6 +386,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
 
         if node_features.size(0) == 0:
             continue
+
+        if node_features.dim() == 3 and node_features.size(0) == 1:
+            node_features = node_features.squeeze(0)
+        if edge_index.dim() == 3 and edge_index.size(0) == 1:
+            edge_index = edge_index.squeeze(0)
 
         node_features = node_features.to(device)
         edge_index = edge_index.to(device)
@@ -457,11 +404,10 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 device=device
             )
 
-        # Forward pass with optional AMP
+        # Forward (AMP)
         if use_amp and scaler is not None:
             with autocast('cuda'):
                 p_los, log_sigma = model(node_features, edge_index)
-            # Cast back to float32 for loss computation (AMP safety)
             p_los = p_los.float()
             log_sigma = log_sigma.float()
         else:
@@ -486,7 +432,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             nan_batches += 1
             continue
 
-        # Gradient accumulation
+        # Gradient accumulation (AMP)
         loss = loss / gradient_accumulation
         if use_amp and scaler is not None:
             scaler.scale(loss).backward()
@@ -494,7 +440,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             loss.backward()
 
         if (batch_idx + 1) % gradient_accumulation == 0:
-            # Unscale gradients before measuring/clipping (AMP)
+            # Unscale for AMP before gradient ops
             if use_amp and scaler is not None:
                 scaler.unscale_(optimizer)
 
@@ -504,7 +450,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             ) ** 0.5
             grad_norms_before.append(total_norm_before)
 
-            # Small gradient noise to prevent deadlock
             for param in model.parameters():
                 if param.grad is not None:
                     param.grad.add_(torch.randn_like(param.grad) * 1e-5)
@@ -524,13 +469,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 optimizer.step()
             optimizer.zero_grad()
 
-        N_batch = node_features.size(0)
-        total_loss += loss.item() * gradient_accumulation * N_batch
+        total_loss += loss.item() * gradient_accumulation
         if components:
-            total_bce += components.get('bce', 0.0) * gradient_accumulation * N_batch
-            total_uncertainty += components.get('uncertainty', 0.0) * gradient_accumulation * N_batch
+            total_bce += components.get('bce', 0.0) * gradient_accumulation
+            total_uncertainty += components.get('uncertainty', 0.0) * gradient_accumulation
         num_batches += 1
-        total_nodes += N_batch
 
         all_p_los.append(p_los.detach().cpu().mean().item())
         all_log_sigma.append(log_sigma.detach().cpu().mean().item())
@@ -545,7 +488,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                   f"p_los=[{p_los.min().item():.3f}, {p_los.max().item():.3f}], "
                   f"sigma=[{sigma.min().item():.3f}, {sigma.max().item():.3f}]")
 
-    # Handle remaining gradients at end of epoch
+    # Handle remaining gradients (AMP-aware)
     if (batch_idx + 1) % gradient_accumulation != 0 and num_batches > 0:
         if use_amp and scaler is not None:
             scaler.unscale_(optimizer)
@@ -557,9 +500,9 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             optimizer.step()
         optimizer.zero_grad()
 
-    metrics = {'loss': total_loss / max(total_nodes, 1)}
+    metrics = {'loss': total_loss / max(num_batches, 1)}
     if total_bce > 0:
-        metrics['bce'] = total_bce / max(total_nodes, 1)
+        metrics['bce'] = total_bce / max(num_batches, 1)
         metrics['uncertainty'] = total_uncertainty / max(num_batches, 1)
     if grad_norms_before:
         metrics['grad_norm_before'] = np.mean(grad_norms_before)
@@ -596,10 +539,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
 
     return metrics
 
+
 @torch.no_grad()
 def evaluate(model: nn.Module, dataloader: DataLoader,
              loss_fn: nn.Module, device: torch.device) -> Dict[str, float]:
-    """Evaluate model on validation set."""
+    """Evaluate model"""
     model.eval()
     total_loss = 0.0
     total_bce = 0.0
@@ -610,13 +554,17 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
     all_log_sigma_vals = []
     all_elevations = []
     num_batches = 0
-    total_nodes = 0
 
     for batch in dataloader:
         node_features, edge_index, edge_attr, pseudorange_errors, nlos_labels = batch
 
         if node_features.size(0) == 0:
             continue
+
+        if node_features.dim() == 3 and node_features.size(0) == 1:
+            node_features = node_features.squeeze(0)
+        if edge_index.dim() == 3 and edge_index.size(0) == 1:
+            edge_index = edge_index.squeeze(0)
 
         node_features = node_features.to(device)
         edge_index = edge_index.to(device)
@@ -648,12 +596,10 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         if torch.isnan(loss) or torch.isinf(loss):
             continue
 
-        N_batch = node_features.size(0)
-        total_loss += loss.item() * N_batch
+        total_loss += loss.item()
         if comps:
-            total_bce += comps.get('bce', 0.0) * N_batch
+            total_bce += comps.get('bce', 0.0)
         num_batches += 1
-        total_nodes += N_batch
 
         p_los_np = p_los.squeeze().cpu().numpy()
         log_sigma_np = log_sigma.squeeze().cpu().numpy()
@@ -693,14 +639,14 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         accuracy = precision = recall = f1 = 0.0
 
     metrics = {
-        'loss': total_loss / max(total_nodes, 1),
+        'loss': total_loss / max(num_batches, 1),
         'accuracy': accuracy,
         'precision': precision,
         'recall': recall,
         'f1': f1,
     }
     if total_bce > 0:
-        metrics['bce'] = total_bce / max(total_nodes, 1)
+        metrics['bce'] = total_bce / max(num_batches, 1)
 
     if all_p_los_vals:
         p_los_arr = np.array(all_p_los_vals)
@@ -727,8 +673,9 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
 
     return metrics
 
+
 def create_optimizer_and_scheduler(model: nn.Module, config: Config):
-    """Create AdamW optimizer and ReduceLROnPlateau scheduler."""
+    """Create optimizer and learning rate scheduler"""
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.LEARNING_RATE,
@@ -743,18 +690,18 @@ def create_optimizer_and_scheduler(model: nn.Module, config: Config):
         )
     return optimizer, scheduler
 
+
 # ============================================================
 # Part 4: Main Entry
 # ============================================================
 
 def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = None, exp_name: str = None):
-    """Complete training pipeline entry point.
+    """Complete training pipeline entry point
 
     Args:
-        resume_from:   path to checkpoint .pth file to resume training from.
-        num_epochs:    override config.NUM_EPOCHS.
-        dataset_name:  override config.DATASETS (single dataset).
-        exp_name:      override experiment directory name (e.g., 'exp_005').
+        resume_from: checkpoint path, continue training from this checkpoint.
+        num_epochs:  override NUM_EPOCHS config.
+        dataset_name: override DATASETS config.
     """
     config = get_config()
     if num_epochs is not None:
@@ -803,21 +750,10 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
     train_dataset = GNSDataset(train_epochs_data, config)
     val_dataset = GNSDataset(val_epochs_data, config)
 
-    if config.USE_BLOCK_DIAGONAL:
-        train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE,
-                                  shuffle=True, num_workers=config.NUM_WORKERS,
-                                  pin_memory=True, collate_fn=batch_collate_fn,
-                                  drop_last=False)
-        val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE * 2,
-                                shuffle=False, num_workers=config.VAL_NUM_WORKERS,
-                                pin_memory=True, collate_fn=batch_collate_fn,
-                                drop_last=False)
-    else:
-
-        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True,
-                                  num_workers=0, collate_fn=lambda x: x[0])
-        val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
-                                num_workers=0, collate_fn=lambda x: x[0])
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True,
+                              num_workers=0, collate_fn=lambda x: x[0])
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+                            num_workers=0, collate_fn=lambda x: x[0])
 
     model = NLOSGAT(
         in_features=config.IN_FEATURES,
@@ -826,6 +762,7 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         num_layers=config.NUM_LAYERS,
         dropout=config.DROPOUT,
     ).to(device)
+
     print(f"\nModel: {sum(p.numel() for p in model.parameters()):,} parameters")
 
     loss_fn = NLOSLoss(
@@ -839,16 +776,17 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
     )
     optimizer, scheduler = create_optimizer_and_scheduler(model, config)
 
-    # AMP scaler (PyTorch 2.x torch.amp API)
+    # AMP scaler
     scaler = GradScaler('cuda') if config.USE_AMP and device.type == 'cuda' else None
     if scaler is not None:
         print("AMP: enabled (automatic mixed precision)")
 
-    # ---- Setup experiment directories and checkpoint resume ----
+    # Handle experiment directory and checkpoint resume
     start_epoch = 0
     checkpoint_dir = None
     tensorboard_dir = None
 
+    # Setup experiment directories
     if resume_from and os.path.exists(resume_from):
         exp_dir = os.path.dirname(os.path.dirname(resume_from))
         checkpoint_dir = os.path.dirname(resume_from)
@@ -857,11 +795,9 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         exp_dir = os.path.join(config.RESULT_DIR, config._exp_name)
         checkpoint_dir = os.path.join(exp_dir, 'checkpoints')
         tensorboard_dir = config.TENSORBOARD_DIR or os.path.join(exp_dir, 'tensorboard')
-        try: os.makedirs(checkpoint_dir, exist_ok=True)
-        except PermissionError: pass
+        os.makedirs(checkpoint_dir, exist_ok=True)
         if config.USE_TENSORBOARD:
-            try: os.makedirs(tensorboard_dir, exist_ok=True)
-            except PermissionError: pass
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
         # Auto-resume from latest checkpoint if available
         if os.path.isdir(checkpoint_dir):
@@ -876,17 +812,15 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         exp_dir = os.path.join(config.RESULT_DIR, f'exp_{exp_id:03d}')
         checkpoint_dir = os.path.join(exp_dir, 'checkpoints')
         tensorboard_dir = config.TENSORBOARD_DIR or os.path.join(exp_dir, 'tensorboard')
-        try: os.makedirs(checkpoint_dir, exist_ok=True)
-        except PermissionError: pass
+        os.makedirs(checkpoint_dir, exist_ok=True)
         if config.USE_TENSORBOARD:
-            try: os.makedirs(tensorboard_dir, exist_ok=True)
-            except PermissionError: pass
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
     print(f"Experiment dir: {exp_dir}")
     if config.USE_TENSORBOARD:
         print(f"TensorBoard dir: {tensorboard_dir}")
 
-    # Resume from checkpoint (explicit or auto-detected)
+    # Resume from checkpoint (either explicit or auto-detected)
     if resume_from and os.path.exists(resume_from):
         print(f"\n{'='*60}")
         print(f"Resuming from checkpoint: {resume_from}")
@@ -897,9 +831,11 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         if scheduler is not None and 'scheduler_state_dict' in checkpoint:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        print(f"  Loaded checkpoint: epoch={checkpoint['epoch']+1} (resuming from epoch {start_epoch+1})")
+        print(f"  Loaded checkpoint: epoch={checkpoint['epoch']} (resuming from epoch {start_epoch+1})")
         if 'val_loss' in checkpoint:
             print(f"  Checkpoint val_loss: {checkpoint['val_loss']:.4f}")
+        if 'val_loss' in checkpoint:
+            best_val_loss = checkpoint['val_loss']
         print(f"  Experiment dir: {exp_dir}")
 
     writer = None
@@ -1034,5 +970,7 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         print(f"TensorBoard logs: {tensorboard_dir}")
         print(f"  Run: tensorboard --logdir={tensorboard_dir}")
 
+
 if __name__ == '__main__':
     main()
+

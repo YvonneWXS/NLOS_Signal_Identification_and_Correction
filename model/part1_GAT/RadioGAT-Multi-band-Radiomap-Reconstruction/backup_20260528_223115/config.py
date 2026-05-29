@@ -58,7 +58,7 @@ class Config:
     SCHEDULER_FACTOR = 0.5
     SCHEDULER_MIN_LR = 1e-6
 
-    EARLY_STOPPING_PATIENCE = 20  # default; overridden to 60 for MoG training
+    EARLY_STOPPING_PATIENCE = 20
 
     CHECKPOINT_INTERVAL = 1
 
@@ -73,8 +73,8 @@ class Config:
     USE_MIXTURE_GAUSSIAN = True
 
     # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 30
-    MOG_BLEND_EPOCHS = 25
+    MOG_PURE_BCE_EPOCHS = 20
+    MOG_BLEND_EPOCHS = 15
     # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
@@ -82,6 +82,8 @@ class Config:
     SIGMA_NLOS_MAX = 200.0
     LAMBDA_MU_REG = 0.001
     LAMBDA_SIGMA_REG = 0.001
+    SIGMA_GAP_TARGET = 0.3
+    LAMBDA_SIGMA_SEP = 2.0
     SIGMA_GAP_TARGET = 0.3
     LAMBDA_SIGMA_SEP = 2.0
 

@@ -13,10 +13,10 @@ PYTHON = r"D:\1_developTool\4_conda\envs\smartLoc\python.exe"
 SRC_DIR = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\RadioGAT-Multi-band-Radiomap-Reconstruction"
 
 EXPERIMENTS = [
-    ("berlin1_potsdamer_platz", "exp_008"),
-    ("berlin2_gendarmenmarkt", "exp_009"),
-    ("frankfurt1_maintower", "exp_010"),
-    ("frankfurt2_westendtower", "exp_011"),
+    ("berlin1_potsdamer_platz", "exp_001"),
+    ("berlin2_gendarmenmarkt", "exp_002"),
+    ("frankfurt1_maintower", "exp_003"),
+    ("frankfurt2_westendtower", "exp_004"),
 ]
 
 

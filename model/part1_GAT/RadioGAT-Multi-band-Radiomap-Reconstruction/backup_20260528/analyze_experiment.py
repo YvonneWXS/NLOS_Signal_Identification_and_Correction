@@ -1,6 +1,6 @@
-﻿"""
-analyze_experiment.py 鈥?鍔犺浇鎸囧畾瀹為獙鐨勬渶浣虫ā鍨嬶紝杩涜鍏ㄩ潰鍒嗘瀽
-鐢ㄦ硶: python analyze_experiment.py --exp exp_006 [--dataset berlin1_potsdamer_platz]
+"""
+analyze_experiment.py — 加载指定实验的最佳模型，进行全面分析
+用法: python analyze_experiment.py --exp exp_006 [--dataset berlin1_potsdamer_platz]
 """
 import os
 import sys
@@ -19,7 +19,7 @@ from GAT_V2025 import NLOSGAT
 
 
 def analyze_experiment(exp_name, dataset_name, config):
-    """瀹屾暣鍒嗘瀽瀹為獙"""
+    """完整分析实验"""
     device = config.get_device()
     exp_dir = os.path.join(config.RESULT_DIR, exp_name)
     best_model_path = os.path.join(exp_dir, 'best_model.pth')
@@ -28,7 +28,7 @@ def analyze_experiment(exp_name, dataset_name, config):
         print(f"ERROR: {best_model_path} not found!")
         return None
 
-    # 鍔犺浇妯″瀷
+    # 加载模型
     model = NLOSGAT(
         in_features=config.IN_FEATURES,
         hidden_features=config.HIDDEN_FEATURES,
@@ -44,7 +44,7 @@ def analyze_experiment(exp_name, dataset_name, config):
     print(f"Loaded model from {exp_name}/best_model.pth")
     print(f"  epoch={checkpoint.get('epoch', '?')+1 if 'epoch' in checkpoint else '?'}, val_loss={checkpoint.get('val_loss', checkpoint.get('val_loss', '?')):.4f}")
 
-    # 鍔犺浇鏁版嵁
+    # 加载数据
     torch.manual_seed(config.RANDOM_SEED)
     np.random.seed(config.RANDOM_SEED)
 
@@ -66,7 +66,7 @@ def analyze_experiment(exp_name, dataset_name, config):
     val_epochs_data = [all_epochs[i] for i in val_indices]
     print(f"Total: {num_total}, Val: {len(val_epochs_data)}")
 
-    # 鎺ㄧ悊
+    # 推理
     records = []
     for epoch in val_epochs_data:
         if len(epoch.observations) == 0:
@@ -80,12 +80,10 @@ def analyze_experiment(exp_name, dataset_name, config):
         ei = torch.tensor(edge_index, dtype=torch.long).to(device)
 
         with torch.no_grad():
-            p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(x, ei)
+            p_los, log_sigma = model(x, ei)
 
         p_los_np = p_los.squeeze().cpu().numpy()
-        mu_nlos_np = mu_nlos.squeeze().cpu().numpy()
-        log_sigma_los_np = log_sigma_los.squeeze().cpu().numpy()
-        log_sigma_np = log_sigma_nlos.squeeze().cpu().numpy()
+        log_sigma_np = log_sigma.squeeze().cpu().numpy()
         nlos_np = nlos_labels.squeeze()
 
         if p_los_np.ndim == 0:
@@ -104,19 +102,16 @@ def analyze_experiment(exp_name, dataset_name, config):
                 'nlos_label': int(nlos_np[i]),
                 'p_los': float(p_los_np[i]),
                 'p_nlos': float(1.0 - p_los_np[i]),
-                'mu_nlos': float(mu_nlos_np[i]),
-                'sigma_los': float(np.exp(log_sigma_los_np[i])),
-                'sigma_nlos': float(np.exp(log_sigma_np[i])),
-                'log_sigma_nlos': float(log_sigma_np[i]),
+                'log_sigma': float(log_sigma_np[i]),
                 'sigma': float(np.exp(log_sigma_np[i])),
             })
 
     print(f"\nTotal samples analyzed: {len(records)}")
 
-    # 鍩虹缁熻
+    # 基础统计
     p_los_arr = np.array([r['p_los'] for r in records])
     nlos_arr = np.array([r['nlos_label'] for r in records])
-    sigma_arr = np.array([r['sigma_nlos'] for r in records])
+    sigma_arr = np.array([r['sigma'] for r in records])
 
     los_mask = nlos_arr == 0
     nlos_mask = nlos_arr == 1
@@ -135,7 +130,7 @@ def analyze_experiment(exp_name, dataset_name, config):
     }
 
     print(f"\n{'='*60}")
-    print(f"Model Analysis 鈥?{exp_name} ({dataset_name})")
+    print(f"Model Analysis — {exp_name} ({dataset_name})")
     print(f"{'='*60}")
     print(f"Total samples: {len(records)}  (LOS={los_mask.sum()}, NLOS={nlos_mask.sum()})")
     print(f"NLOS ratio: {nlos_mask.sum()/len(records):.3f}")
@@ -153,7 +148,7 @@ def analyze_experiment(exp_name, dataset_name, config):
     results['p_los_nlos_avg'] = float(p_los_nlos.mean())
     results['p_los_gap'] = float(gap)
 
-    # 鍒嗙被鎸囨爣
+    # 分类指标
     pred_nlos = (1.0 - p_los_arr) > 0.5
     tp = int(np.sum(pred_nlos & nlos_mask))
     fp = int(np.sum(pred_nlos & los_mask))
@@ -193,20 +188,12 @@ def analyze_experiment(exp_name, dataset_name, config):
     results['sigma_los_mean'] = float(sigma_los.mean())
     results['sigma_nlos_mean'] = float(sigma_nlos.mean())
 
-    # ========== 閿欒妗堜緥鍒嗘瀽 ==========
+    # ========== 错误案例分析 ==========
     print(f"\n{'='*60}")
     print(f"Error Case Analysis")
     print(f"{'='*60}")
 
-    mu_nlos_arr = np.array([r["mu_nlos"] for r in records])
-    mu_nlos_los = mu_nlos_arr[los_mask]
-    mu_nlos_nlos = mu_nlos_arr[nlos_mask]
-    results["mu_nlos_mean"] = float(mu_nlos_arr.mean())
-    results["sigma_nlos_los"] = float(sigma_los.mean())
-    results["sigma_nlos_nlos"] = float(sigma_nlos.mean())
-    results["sigma_nlos_gap"] = float(sigma_nlos.mean() - sigma_los.mean())
-
-    # Type A: FN (NLOS 鈫?predicted as LOS, p_los>0.5)
+    # Type A: FN (NLOS → predicted as LOS, p_los>0.5)
     fn_records = [r for r in records if r['nlos_label'] == 1 and r['p_los'] > 0.5]
     fn_sorted = sorted(fn_records, key=lambda r: r['p_los'], reverse=True)
     print(f"\n--- Type A: NLOS predicted as LOS (FN, p_los>0.5) ---")
@@ -225,7 +212,7 @@ def analyze_experiment(exp_name, dataset_name, config):
         results['fn_top10_prerr_mean'] = float(np.mean([r['pseudorange_error'] for r in fn_sorted[:10]]))
         results['fn_top10_prstdev_mean'] = float(np.mean([r['pr_stdev'] for r in fn_sorted[:10]]))
 
-    # Type B: FP (LOS 鈫?predicted as NLOS, p_los<0.5)
+    # Type B: FP (LOS → predicted as NLOS, p_los<0.5)
     fp_records = [r for r in records if r['nlos_label'] == 0 and r['p_los'] < 0.5]
     fp_sorted = sorted(fp_records, key=lambda r: r['p_los'])
     print(f"\n--- Type B: LOS predicted as NLOS (FP, p_los<0.5) ---")
@@ -244,7 +231,7 @@ def analyze_experiment(exp_name, dataset_name, config):
         results['fp_top10_prerr_mean'] = float(np.mean([r['pseudorange_error'] for r in fp_sorted[:10]]))
         results['fp_top10_prstdev_mean'] = float(np.mean([r['pr_stdev'] for r in fp_sorted[:10]]))
 
-    # 閿欒 vs 姝ｇ‘ 鐗瑰緛瀵规瘮
+    # 错误 vs 正确 特征对比
     print(f"\n{'='*60}")
     print(f"Feature Comparison: Correct vs Error")
     print(f"{'='*60}")
@@ -282,7 +269,7 @@ def analyze_experiment(exp_name, dataset_name, config):
             results[f'los_{feat}_correct'] = float(np.mean(corr_vals))
             results[f'los_{feat}_error'] = float(np.mean(err_vals))
 
-    # 鏄熷骇鍒嗗竷
+    # 星座分布
     print(f"\n--- Per-constellation p_los stats ---")
     for gnss in ['GPS', 'Glonass', 'Galileo', 'BeiDou']:
         gnss_recs = [r for r in records if r['gnss_id'] == gnss]
@@ -300,7 +287,8 @@ def analyze_experiment(exp_name, dataset_name, config):
             results[f'{gnss}_nlos_avg'] = float(nlos_p.mean()) if len(nlos_p) > 0 else 0
             results[f'{gnss}_gap'] = float(gnss_gap)
 
-    # p_los 鍒嗗竷鐩存柟鍥?    print(f"\n--- p_los distribution (LOS vs NLOS) ---")
+    # p_los 分布直方图
+    print(f"\n--- p_los distribution (LOS vs NLOS) ---")
     bins = [(0, 0.1), (0.1, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5),
             (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.0)]
     print(f"  {'Bin':>12s} {'LOS':>8s} {'NLOS':>8s} {'LOS%':>8s} {'NLOS%':>8s}")
@@ -309,10 +297,10 @@ def analyze_experiment(exp_name, dataset_name, config):
         nlos_count = int(np.sum((p_los_nlos >= lo) & (p_los_nlos < hi + 1e-9)))
         print(f"  [{lo:.1f}-{hi:.1f}): {los_count:8d} {nlos_count:8d} {los_count/max(len(p_los_los),1)*100:7.1f}% {nlos_count/max(len(p_los_nlos),1)*100:7.1f}%")
 
-    # 鍙屽嘲妫€娴?    los_high = float(np.sum(p_los_los > 0.7) / max(len(p_los_los), 1))
+    # 双峰检测
+    los_high = float(np.sum(p_los_los > 0.7) / max(len(p_los_los), 1))
     nlos_low = float(np.sum(p_los_nlos < 0.3) / max(len(p_los_nlos), 1))
     print(f"\n--- Bimodality check ---")
-    los_high = (all_p_los[all_nlos==0] > 0.7).float().mean()
     print(f"  LOS samples with p_los>0.7: {los_high*100:.1f}%")
     print(f"  NLOS samples with p_los<0.3: {nlos_low*100:.1f}%")
     results['los_p_high_pct'] = float(los_high * 100)
@@ -321,7 +309,8 @@ def analyze_experiment(exp_name, dataset_name, config):
                                  'good' if (los_high > 0.5 and nlos_low > 0.5) else \
                                  'moderate' if (los_high > 0.4 and nlos_low > 0.4) else 'poor'
 
-    # p_los vs pseudorange_error 鐩稿叧鎬?    print(f"\n--- p_los vs |pseudorange_error| by true class ---")
+    # p_los vs pseudorange_error 相关性
+    print(f"\n--- p_los vs |pseudorange_error| by true class ---")
     for label, name in [(0, 'LOS'), (1, 'NLOS')]:
         label_recs = [r for r in records if r['nlos_label'] == label]
         low_err = [r for r in label_recs if r['pseudorange_error'] < 1.0]
@@ -337,7 +326,7 @@ def analyze_experiment(exp_name, dataset_name, config):
     print(f"\n--- NLOS-dense epoch analysis ---")
     epoch_records = {}
     for r in records:
-        # 绠€鍗曟寜 epoch 鍒嗙粍 (浣跨敤 observation index)
+        # 简单按 epoch 分组 (使用 observation index)
         pass
 
     print(f"\nAnalysis complete for {exp_name} ({dataset_name}).")
@@ -367,4 +356,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

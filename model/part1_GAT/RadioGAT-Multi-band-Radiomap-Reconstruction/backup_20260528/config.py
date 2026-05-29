@@ -1,4 +1,4 @@
-﻿"""
+"""
 Configuration Module
 ======================================
 Centralized management of all training and data processing configurations.
@@ -58,7 +58,7 @@ class Config:
     SCHEDULER_FACTOR = 0.5
     SCHEDULER_MIN_LR = 1e-6
 
-    EARLY_STOPPING_PATIENCE = 20  # default; overridden to 60 for MoG training
+    EARLY_STOPPING_PATIENCE = 20
 
     CHECKPOINT_INTERVAL = 1
 
@@ -70,20 +70,7 @@ class Config:
     LAMBDA_ENTROPY = 0.03
     LAMBDA_UNC = 0.08
     LAMBDA_ELEVATION_PRIOR = 0.1
-    USE_MIXTURE_GAUSSIAN = True
-
-    # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 30
-    MOG_BLEND_EPOCHS = 25
-    # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
-    MU_NLOS_MIN = 0.0
-    MU_NLOS_MAX = 500.0
-    SIGMA_NLOS_MIN = 2.0
-    SIGMA_NLOS_MAX = 200.0
-    LAMBDA_MU_REG = 0.001
-    LAMBDA_SIGMA_REG = 0.001
-    SIGMA_GAP_TARGET = 0.3
-    LAMBDA_SIGMA_SEP = 2.0
+    USE_MIXTURE_GAUSSIAN = False
 
     # ========== Graph Construction Config ==========
     AZIMUTH_THRESHOLD = 90
@@ -181,5 +168,3 @@ def get_config(**overrides) -> Config:
         if hasattr(config, key):
             setattr(config, key, value)
     return config
-
-

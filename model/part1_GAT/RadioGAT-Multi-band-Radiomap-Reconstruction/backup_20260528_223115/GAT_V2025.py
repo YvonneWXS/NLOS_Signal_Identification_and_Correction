@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-GAT_V2026.py -- NLOS Perception GAT Main File
+GAT_V2025.py -- NLOS Perception GAT Main File
 ==============================================
 Part 1: Model Definition -- GATLayer + NLOSGAT
-Part 2: Loss Function    -- NLOSLoss (BCE + Heteroscedastic Uncertainty + Entropy)
+Part 2: Loss Function    -- NLOSLoss (BCE + Uncertainty + Entropy)
 Part 3: Training         -- Dataset + train_epoch + evaluate
 Part 4: Main Entry       -- main() training orchestration
 
-Current mode: BCE + Heteroscedastic Uncertainty (USE_MIXTURE_GAUSSIAN=False)
-
-Recovered from GAT_V2025.py.backup + GAT_V2025.py (Codex-repaired version).
-Key improvements over original:
-  - torch.cuda.amp -> torch.amp (PyTorch 2.x native API)
-  - GradScaler('cuda') with explicit device
-  - autocast('cuda') with explicit device
-  - Auto-resume from latest checkpoint in experiment dir
-  - Clean English docstrings (original Chinese was mojibake)
-  - p_los/log_sigma float conversion after autocast for numerical stability
+Current mode: BCE + Uncertainty (USE_MIXTURE_GAUSSIAN=False)
 """
 
 import os
@@ -43,6 +34,7 @@ from NodeFeature_Generate import (
 )
 from Depth_Adj_Generate import build_azimuth_graph
 
+
 def _safe_torch_save(obj, path):
     """Save using BytesIO buffer to avoid sandbox issues with torch.save."""
     buf = io.BytesIO()
@@ -50,12 +42,14 @@ def _safe_torch_save(obj, path):
     with open(path, "wb") as f:
         f.write(buf.getvalue())
 
+
 # ============================================================
 # Part 1: Model Definition
 # ============================================================
 
+
 class GATLayer(nn.Module):
-    """Graph Attention Layer (custom implementation, no torch-geometric dependency)"""
+    """Graph Attention Layer (preserves original RadioGAT custom style)"""
 
     def __init__(self, in_features: int, out_features: int, heads: int = 4,
                  dropout: float = 0.1, concat: bool = True):
@@ -75,7 +69,7 @@ class GATLayer(nn.Module):
         nn.init.xavier_uniform_(self.att.data)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """Vectorized forward (v2026 block-diagonal batching)."""
+        """Vectorized forward (v2026 block-diagonal batching compatible)."""
         if x.dim() == 1:
             x = x.unsqueeze(0)
 
@@ -105,13 +99,15 @@ class GATLayer(nn.Module):
         else:
             out = torch.mean(out, dim=1)
         return out
+
+
 class NLOSGAT(nn.Module):
     """
     NLOS Perception GAT Network
 
     Output:
       p_los:      (N, 1) LOS probability in [0, 1]      (Sigmoid)
-      log_sigma:  (N, 1) predicted uncertainty log-std   (unactivated)
+      log_sigma_nlos:  (N, 1) predicted uncertainty log-std   (unactivated)
 
     Architecture:
       Linear(11->128) -> 2xGATLayer(128, heads=8, concat=False)
@@ -149,30 +145,31 @@ class NLOSGAT(nn.Module):
         )
 
         self.p_los_head = nn.Linear(hidden_features, 1)
-        self.uncertainty_head = nn.Linear(hidden_features, 1)
+        self.mu_nlos_head = nn.Linear(hidden_features, 1)
+        self.log_sigma_los_head = nn.Linear(hidden_features, 1)
+        self.log_sigma_nlos_head = nn.Linear(hidden_features, 1)
 
         self._init_output_layers()
 
     def _init_output_layers(self):
-        """Initialize output heads to avoid activation saturation.
-
-        p_los_head: bias=-0.5 -> sigmoid(-0.5) ~= 0.38, NLOS-skeptical start
-        uncertainty_head: bias=0.0 -> log_sigma ~= 0, sigma ~= 1.0 km
-        """
+        """Initialize output heads to avoid activation saturation."""
         nn.init.constant_(self.p_los_head.bias, -0.5)
         nn.init.normal_(self.p_los_head.weight, mean=0.0, std=0.01)
-
-        nn.init.constant_(self.uncertainty_head.bias, 0.0)
-        nn.init.normal_(self.uncertainty_head.weight, mean=0.0, std=0.01)
+        nn.init.constant_(self.mu_nlos_head.bias, 3.91)
+        nn.init.normal_(self.mu_nlos_head.weight, mean=0.0, std=0.01)
+        nn.init.constant_(self.log_sigma_los_head.bias, 0.693)
+        nn.init.normal_(self.log_sigma_los_head.weight, mean=0.0, std=0.01)
+        nn.init.constant_(self.log_sigma_nlos_head.bias, 2.30)
+        nn.init.normal_(self.log_sigma_nlos_head.weight, mean=0.0, std=0.01)
 
     def forward(self, x: torch.Tensor,
-                edge_index: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+                edge_index: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         N = x.size(0)
         device = x.device
 
         if N == 0:
             zeros = torch.zeros(1, 1, device=device)
-            return zeros, zeros
+            return zeros, zeros, zeros, zeros
 
         if edge_index.dim() != 2 or edge_index.size(1) == 0 or \
            (edge_index.size(1) > 0 and edge_index.max() >= N):
@@ -199,23 +196,25 @@ class NLOSGAT(nn.Module):
         h = self.output(h)
 
         p_los = torch.sigmoid(self.p_los_head(h))
-        log_sigma = self.uncertainty_head(h)
+        mu_nlos_raw = self.mu_nlos_head(h)
+        mu_nlos = F.softplus(mu_nlos_raw)
+        mu_nlos = torch.clamp(mu_nlos, 0.0, 500.0)
+        log_sigma_los = self.log_sigma_los_head(h)
+        log_sigma_nlos = self.log_sigma_nlos_head(h)
 
-        return p_los, log_sigma
+        return p_los, mu_nlos, log_sigma_los, log_sigma_nlos
+
 
 # ============================================================
 # Part 2: Loss Function
 # ============================================================
 
+
 class NLOSLoss(nn.Module):
     """
-    BCE + Heteroscedastic Uncertainty + Entropy Regularization
+    BCE + Heteroscedastic Uncertainty + Entropy regularization
 
-    BCE:           weighted BCE on p_los (weight=pos_weight for NLOS)
-    Uncertainty:   heteroscedastic regression loss (Gaussian NLL with log_sigma)
-    Entropy:       entropy regularization to prevent p_los collapsing to 0 or 1
-
-    L_total = lambda_bce * L_BCE + lambda_unc * L_uncertainty - lambda_entropy * H(p_los)
+    L_total = lambda_bce * L_BCE + L_uncertainty - lambda_entropy * H(p_los)
     """
 
     def __init__(self, pos_weight: float = 1.07,
@@ -235,7 +234,7 @@ class NLOSLoss(nn.Module):
         self.lambda_elevation_prior = lambda_elevation_prior
         self.eps = 1e-6
 
-    def forward(self, p_los: torch.Tensor, log_sigma: torch.Tensor,
+    def forward(self, p_los: torch.Tensor, log_sigma_nlos: torch.Tensor,
                 pseudorange_error: torch.Tensor,
                 nlos_label: torch.Tensor,
                 elevation: Optional[torch.Tensor] = None,
@@ -246,21 +245,18 @@ class NLOSLoss(nn.Module):
             return (loss, {}) if return_components else loss
 
         p_los = p_los.squeeze()
-        log_sigma = log_sigma.squeeze()
+        log_sigma_nlos = log_sigma_nlos.squeeze()
         pseudorange_error = pseudorange_error.squeeze()
         nlos_label = nlos_label.squeeze()
 
-        # Class imbalance weights
         weights = torch.where(nlos_label == 1,
                               torch.tensor(self.pos_weight, device=p_los.device),
                               torch.tensor(1.0, device=p_los.device))
 
-        # Target: p_los -> 1 for LOS (label=0), p_los -> 0 for NLOS (label=1)
         target_los = 1.0 - nlos_label
         if self.label_smoothing > 0:
             target_los = target_los * (1.0 - self.label_smoothing) + 0.5 * self.label_smoothing
 
-        # 1. BCE loss (with p_los smoothing to prevent gradient starvation)
         p_los_smooth = p_los * (1.0 - self.p_los_smoothing) + 0.5 * self.p_los_smoothing
         bce = F.binary_cross_entropy(
             torch.clamp(p_los_smooth, self.eps, 1.0 - self.eps),
@@ -268,8 +264,7 @@ class NLOSLoss(nn.Module):
             weight=weights.detach()
         )
 
-        # 2. Heteroscedastic uncertainty loss (Gaussian NLL)
-        sigma = torch.exp(log_sigma)
+        sigma = torch.exp(log_sigma_nlos)
         sigma = torch.clamp(sigma, self.eps, 1e6)
         per_sample_unc = 0.5 * torch.log(sigma ** 2) + \
                          0.5 * (pseudorange_error ** 2) / (sigma ** 2 + self.eps)
@@ -277,18 +272,15 @@ class NLOSLoss(nn.Module):
 
         total_loss = self.lambda_bce * bce + self.lambda_unc * uncertainty_loss
 
-        # 3. Entropy regularization: penalize p_los collapsing to 0 or 1
         entropy = None
         if self.lambda_entropy > 0:
             p_clamped = torch.clamp(p_los, self.eps, 1.0 - self.eps)
             entropy = -(p_clamped * torch.log(p_clamped) + (1.0 - p_clamped) * torch.log(1.0 - p_clamped))
             total_loss = total_loss - self.lambda_entropy * entropy.mean()
 
-        # log_sigma L2 regularization: gentle penalty against extreme log_sigma
-        log_sigma_reg = 0.001 * (log_sigma ** 2).mean()
-        total_loss = total_loss + log_sigma_reg
+        log_sigma_nlos_reg = 0.001 * (log_sigma_nlos ** 2).mean()
+        total_loss = total_loss + log_sigma_nlos_reg
 
-        # Elevation physical prior: penalize high p_los for below-horizon satellites
         elev_neg_count = 0
         elev_neg_p_los_mean = 0.0
         if elevation is not None and self.lambda_elevation_prior > 0:
@@ -315,7 +307,7 @@ class NLOSLoss(nn.Module):
                 'p_los_los_avg': p_los_los_avg,
                 'p_los_nlos_avg': p_los_nlos_avg,
                 'sigma_mean': sigma.mean().item(),
-                'log_sigma_mean': log_sigma.mean().item(),
+                'log_sigma_nlos_mean': log_sigma_nlos.mean().item(),
             }
             if entropy is not None:
                 components['entropy'] = entropy.mean().item()
@@ -325,33 +317,79 @@ class NLOSLoss(nn.Module):
             return total_loss, components
         return total_loss
 
+
 # ============================================================
 # Part 3: Training & Evaluation
 # ============================================================
 
+
+class MoGNLLLoss(nn.Module):
+    """Mixture of Gaussians NLL Loss."""
+    def __init__(self, lambda_entropy=0.03, lambda_elevation_prior=0.1,
+                 lambda_mu_reg=0.001, lambda_sigma_reg=0.001, sigma_gap_target=0.5, lambda_sigma_sep=0.1):
+        super().__init__()
+        self.lambda_entropy = lambda_entropy
+        self.lambda_elevation_prior = lambda_elevation_prior
+        self.lambda_mu_reg = lambda_mu_reg
+        self.lambda_sigma_reg = lambda_sigma_reg
+        self.sigma_gap_target = sigma_gap_target
+        self.lambda_sigma_sep = lambda_sigma_sep
+        self.eps = 1e-6
+
+    def forward(self, p_los, mu_nlos, log_sigma_los, log_sigma_nlos, pseudorange_error,
+                nlos_label, elevation=None, return_components=False):
+        import math as _m
+        N = p_los.size(0)
+        if N == 0:
+            loss = torch.tensor(0.0, device=p_los.device)
+            return (loss, {}) if return_components else loss
+        p_los = p_los.squeeze()
+        mu_nlos = mu_nlos.squeeze()
+        log_sigma_los = log_sigma_los.squeeze()
+        log_sigma_nlos = log_sigma_nlos.squeeze()
+        err = pseudorange_error.squeeze()
+        p_safe = torch.clamp(p_los, self.eps, 1.0-self.eps)
+        sigma_los = torch.clamp(torch.exp(log_sigma_los), 0.5, 50.0)
+        sigma_nlos = torch.clamp(torch.exp(log_sigma_nlos), 2.0, 200.0)
+        log_prob_los = -0.5*(err/(sigma_los+self.eps))**2 - torch.log(sigma_los+self.eps) - 0.5*_m.log(2*_m.pi)
+        log_prob_nlos = -0.5*((err-mu_nlos)/(sigma_nlos+self.eps))**2 - torch.log(sigma_nlos+self.eps) - 0.5*_m.log(2*_m.pi)
+        lp_los = torch.log(p_safe) + log_prob_los
+        lp_nlos = torch.log(1-p_safe) + log_prob_nlos
+        max_log = torch.max(lp_los, lp_nlos)
+        log_mix = max_log + torch.log(torch.exp(lp_los-max_log) + torch.exp(lp_nlos-max_log) + self.eps)
+        nll = -log_mix.mean()
+        total_loss = nll
+        if self.lambda_entropy > 0:
+            ent = -(p_safe*torch.log(p_safe) + (1-p_safe)*torch.log(1-p_safe))
+            total_loss -= self.lambda_entropy * ent.mean()
+        total_loss += self.lambda_mu_reg * (mu_nlos**2).mean()
+        total_loss += self.lambda_sigma_reg * (log_sigma_nlos**2).mean()
+        if elevation is not None and self.lambda_elevation_prior > 0:
+            below = (elevation.squeeze() < 0).float()
+            if below.sum() > 0:
+                total_loss += self.lambda_elevation_prior * torch.relu(p_los-0.3).mul(below).mean()
+        # Sigma separation loss: push sigma_nlos(NLOS) >> sigma_nlos(LOS)
+        if self.lambda_sigma_sep > 0:
+            lm = (nlos_label.squeeze()==0); nm = (nlos_label.squeeze()==1)
+            if lm.any() and nm.any():
+                gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
+                total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
+
+        if return_components:
+            lm = (nlos_label.squeeze()==0); nm = (nlos_label.squeeze()==1)
+            return total_loss, {
+                'nll':nll.item(),'p_los_mean':p_los.mean().item(),
+                'p_los_los_avg':p_los[lm].mean().item() if lm.any() else 0,
+                'p_los_nlos_avg':p_los[nm].mean().item() if nm.any() else 0,
+                'mu_nlos_mean':mu_nlos.mean().item(),'sigma_nlos_mean':sigma_nlos.mean().item()}
+        return total_loss
+
+
 def _extract_elevation(node_features: torch.Tensor) -> torch.Tensor:
-    """Extract raw elevation (degrees) from node features. Dim 0 = elevation/90."""
+    """Extract raw elevation (degrees) from node features -- dim 0 is elevation/90"""
     return node_features[..., 0] * 90.0
 
-def batch_collate_fn(batch):
-    """Block-diagonal collate for variable-size GNSS graphs."""
-    nfs, eis, eas, pes, lbs = [], [], [], [], []
-    offset = 0
-    for nf, ei, ea, pe, lb in batch:
-        N = nf.size(0)
-        if N == 0:
-            continue
-        nfs.append(nf)
-        eis.append(ei + offset)
-        eas.append(ea)
-        pes.append(pe)
-        lbs.append(lb)
-        offset += N
-    if len(nfs) == 0:
-        return (torch.zeros(0, 11), torch.zeros(2, 0, dtype=torch.long),
-                torch.zeros(0), torch.zeros(0), torch.zeros(0))
-    return (torch.cat(nfs, dim=0), torch.cat(eis, dim=1),
-            torch.cat(eas, dim=0), torch.cat(pes, dim=0), torch.cat(lbs, dim=0))
+
 
 def batch_collate_fn(batch):
     """Block-diagonal collate for variable-size GNSS graphs."""
@@ -374,7 +412,7 @@ def batch_collate_fn(batch):
             torch.cat(eas, dim=0), torch.cat(pes, dim=0), torch.cat(lbs, dim=0))
 
 class GNSDataset(Dataset):
-    """GNSS Graph Dataset: wraps EpochData list into PyTorch Dataset"""
+    """GNSS Graph Dataset -- wraps EpochData list into PyTorch Dataset"""
 
     def __init__(self, epochs_data: List, config: Config):
         self.graph_data = []
@@ -413,6 +451,7 @@ class GNSDataset(Dataset):
             torch.tensor(data['nlos_label'], dtype=torch.float32),
         )
 
+
 def train_epoch(model: nn.Module, dataloader: DataLoader,
                 optimizer: torch.optim.Optimizer,
                 scheduler: Optional[ReduceLROnPlateau],
@@ -423,8 +462,12 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 writer: Optional[SummaryWriter] = None,
                 global_step: int = 0,
                 scaler: Optional[GradScaler] = None,
-                use_amp: bool = False) -> Dict[str, float]:
-    """Train one epoch with gradient accumulation and AMP support."""
+                use_amp: bool = False,
+                mog_loss_fn: Optional[nn.Module] = None,
+                nlos_loss_bce: Optional[nn.Module] = None,
+                mog_pure_bce_epochs: int = 20,
+                mog_blend_epochs: int = 15) -> Dict[str, float]:
+    """Train one epoch"""
     model.train()
     total_loss = 0.0
     total_bce = 0.0
@@ -433,9 +476,19 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
     nan_batches = 0
     grad_norms_before = []
     grad_norms_after = []
+
+    use_mog_loss_fn = mog_loss_fn is not None and nlos_loss_bce is not None
+    is_pure_bce = use_mog_loss_fn and (epoch < mog_pure_bce_epochs)
+    is_blend = use_mog_loss_fn and (mog_pure_bce_epochs <= epoch < mog_pure_bce_epochs + mog_blend_epochs)
+    if is_pure_bce:
+        for p in model.mu_nlos_head.parameters(): p.requires_grad = False
+        for p in model.log_sigma_nlos_head.parameters(): p.requires_grad = False
+    else:
+        for p in model.mu_nlos_head.parameters(): p.requires_grad = True
+        for p in model.log_sigma_nlos_head.parameters(): p.requires_grad = True
+    lam = 1.0 - (epoch - mog_pure_bce_epochs) / max(mog_blend_epochs, 1) if is_blend else 0.0
     all_p_los = []
     all_log_sigma = []
-    total_nodes = 0
 
     optimizer.zero_grad()
 
@@ -444,6 +497,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
 
         if node_features.size(0) == 0:
             continue
+
+        if node_features.dim() == 3 and node_features.size(0) == 1:
+            node_features = node_features.squeeze(0)
+        if edge_index.dim() == 3 and edge_index.size(0) == 1:
+            edge_index = edge_index.squeeze(0)
 
         node_features = node_features.to(device)
         edge_index = edge_index.to(device)
@@ -457,36 +515,49 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 device=device
             )
 
-        # Forward pass with optional AMP
+        # Forward (AMP)
         if use_amp and scaler is not None:
             with autocast('cuda'):
-                p_los, log_sigma = model(node_features, edge_index)
-            # Cast back to float32 for loss computation (AMP safety)
+                p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(node_features, edge_index)
             p_los = p_los.float()
-            log_sigma = log_sigma.float()
+            mu_nlos = mu_nlos.float()
+            log_sigma_nlos = log_sigma_nlos.float()
         else:
-            p_los, log_sigma = model(node_features, edge_index)
+            p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(node_features, edge_index)
 
-        if torch.isnan(p_los).any() or torch.isnan(log_sigma).any():
+        if torch.isnan(p_los).any() or torch.isnan(log_sigma_nlos).any():
             nan_batches += 1
             continue
 
         elevation_deg = _extract_elevation(node_features)
 
-        try:
-            loss, components = loss_fn(p_los, log_sigma, pseudorange_errors,
-                            nlos_labels, elevation=elevation_deg,
-                            return_components=True)
-        except (TypeError, ValueError):
-            loss = loss_fn(p_los, log_sigma, pseudorange_errors, nlos_labels,
-                           elevation=elevation_deg)
-            components = {}
+        if use_mog_loss_fn:
+            if is_pure_bce:
+                loss, components = nlos_loss_bce(p_los, log_sigma_nlos, pseudorange_errors,
+                                    nlos_labels, elevation=elevation_deg, return_components=True)
+            elif is_blend:
+                loss_bce, comps_bce = nlos_loss_bce(p_los, log_sigma_nlos, pseudorange_errors,
+                                    nlos_labels, elevation=elevation_deg, return_components=True)
+                loss_mog, comps_mog = mog_loss_fn(p_los, mu_nlos, log_sigma_los, log_sigma_nlos,
+                                    pseudorange_errors, nlos_labels, elevation=elevation_deg, return_components=True)
+                loss = lam * loss_bce + (1.0 - lam) * loss_mog
+                components = {**comps_bce, 'nll': comps_mog.get('nll', 0.0)}
+            else:
+                loss, components = mog_loss_fn(p_los, mu_nlos, log_sigma_los, log_sigma_nlos,
+                                    pseudorange_errors, nlos_labels, elevation=elevation_deg, return_components=True)
+        else:
+            try:
+                loss, components = loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
+                                nlos_labels, elevation=elevation_deg, return_components=True)
+            except (TypeError, ValueError):
+                loss = loss_fn(p_los, log_sigma_nlos, pseudorange_errors, nlos_labels, elevation=elevation_deg)
+                components = {}
 
         if torch.isnan(loss) or torch.isinf(loss):
             nan_batches += 1
             continue
 
-        # Gradient accumulation
+        # Gradient accumulation (AMP)
         loss = loss / gradient_accumulation
         if use_amp and scaler is not None:
             scaler.scale(loss).backward()
@@ -494,7 +565,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             loss.backward()
 
         if (batch_idx + 1) % gradient_accumulation == 0:
-            # Unscale gradients before measuring/clipping (AMP)
+            # Unscale for AMP before gradient ops
             if use_amp and scaler is not None:
                 scaler.unscale_(optimizer)
 
@@ -504,7 +575,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             ) ** 0.5
             grad_norms_before.append(total_norm_before)
 
-            # Small gradient noise to prevent deadlock
             for param in model.parameters():
                 if param.grad is not None:
                     param.grad.add_(torch.randn_like(param.grad) * 1e-5)
@@ -524,28 +594,26 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 optimizer.step()
             optimizer.zero_grad()
 
-        N_batch = node_features.size(0)
-        total_loss += loss.item() * gradient_accumulation * N_batch
+        total_loss += loss.item() * gradient_accumulation
         if components:
-            total_bce += components.get('bce', 0.0) * gradient_accumulation * N_batch
-            total_uncertainty += components.get('uncertainty', 0.0) * gradient_accumulation * N_batch
+            total_bce += components.get('bce', 0.0) * gradient_accumulation
+            total_uncertainty += components.get('uncertainty', 0.0) * gradient_accumulation
         num_batches += 1
-        total_nodes += N_batch
 
         all_p_los.append(p_los.detach().cpu().mean().item())
-        all_log_sigma.append(log_sigma.detach().cpu().mean().item())
+        all_log_sigma.append(log_sigma_nlos.detach().cpu().mean().item())
 
         if epoch < 1 and batch_idx == 0:
             bce_val = components.get('bce', 0.0) if components else 0.0
             unc_val = components.get('uncertainty', 0.0) if components else 0.0
-            sigma = torch.exp(log_sigma)
+            sigma = torch.exp(log_sigma_nlos)
             print(f"  Epoch {epoch}, Batch {batch_idx}: "
                   f"loss={loss.item() * gradient_accumulation:.4f} "
                   f"(BCE={bce_val * gradient_accumulation:.4f}, Unc={unc_val * gradient_accumulation:.4f}), "
                   f"p_los=[{p_los.min().item():.3f}, {p_los.max().item():.3f}], "
                   f"sigma=[{sigma.min().item():.3f}, {sigma.max().item():.3f}]")
 
-    # Handle remaining gradients at end of epoch
+    # Handle remaining gradients (AMP-aware)
     if (batch_idx + 1) % gradient_accumulation != 0 and num_batches > 0:
         if use_amp and scaler is not None:
             scaler.unscale_(optimizer)
@@ -557,9 +625,9 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             optimizer.step()
         optimizer.zero_grad()
 
-    metrics = {'loss': total_loss / max(total_nodes, 1)}
+    metrics = {'loss': total_loss / max(num_batches, 1)}
     if total_bce > 0:
-        metrics['bce'] = total_bce / max(total_nodes, 1)
+        metrics['bce'] = total_bce / max(num_batches, 1)
         metrics['uncertainty'] = total_uncertainty / max(num_batches, 1)
     if grad_norms_before:
         metrics['grad_norm_before'] = np.mean(grad_norms_before)
@@ -568,7 +636,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
         metrics['nan_batches'] = nan_batches
     if all_p_los:
         metrics['p_los_avg'] = np.mean(all_p_los)
-        metrics['log_sigma_avg'] = np.mean(all_log_sigma)
+        metrics['log_sigma_nlos_avg'] = np.mean(all_log_sigma)
 
     if writer is not None:
         try:
@@ -582,7 +650,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 writer.add_scalar('Train/GradNorm_After', metrics['grad_norm_after'], step)
             if 'p_los_avg' in metrics:
                 writer.add_scalar('Train/p_LOS_avg', metrics['p_los_avg'], step)
-                writer.add_scalar('Train/log_sigma_avg', metrics['log_sigma_avg'], step)
+                writer.add_scalar('Train/log_sigma_nlos_avg', metrics['log_sigma_nlos_avg'], step)
             if 'nan_batches' in metrics:
                 writer.add_scalar('Train/NaN_Batches', metrics['nan_batches'], step)
         except Exception:
@@ -596,10 +664,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
 
     return metrics
 
+
 @torch.no_grad()
 def evaluate(model: nn.Module, dataloader: DataLoader,
              loss_fn: nn.Module, device: torch.device) -> Dict[str, float]:
-    """Evaluate model on validation set."""
+    """Evaluate model"""
     model.eval()
     total_loss = 0.0
     total_bce = 0.0
@@ -610,13 +679,17 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
     all_log_sigma_vals = []
     all_elevations = []
     num_batches = 0
-    total_nodes = 0
 
     for batch in dataloader:
         node_features, edge_index, edge_attr, pseudorange_errors, nlos_labels = batch
 
         if node_features.size(0) == 0:
             continue
+
+        if node_features.dim() == 3 and node_features.size(0) == 1:
+            node_features = node_features.squeeze(0)
+        if edge_index.dim() == 3 and edge_index.size(0) == 1:
+            edge_index = edge_index.squeeze(0)
 
         node_features = node_features.to(device)
         edge_index = edge_index.to(device)
@@ -630,7 +703,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
                 device=device
             )
 
-        p_los, log_sigma = model(node_features, edge_index)
+        p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(node_features, edge_index)
 
         if torch.isnan(p_los).any():
             continue
@@ -638,25 +711,24 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         elevation_deg = _extract_elevation(node_features)
 
         try:
-            loss, comps = loss_fn(p_los, log_sigma, pseudorange_errors,
+            loss, comps = loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
                                   nlos_labels, elevation=elevation_deg,
                                   return_components=True)
         except (TypeError, ValueError):
-            loss = loss_fn(p_los, log_sigma, pseudorange_errors, nlos_labels,
+            loss = loss_fn(p_los, log_sigma_nlos, pseudorange_errors, nlos_labels,
                            elevation=elevation_deg)
             comps = {}
         if torch.isnan(loss) or torch.isinf(loss):
             continue
 
-        N_batch = node_features.size(0)
-        total_loss += loss.item() * N_batch
+        total_loss += loss.item()
         if comps:
-            total_bce += comps.get('bce', 0.0) * N_batch
+            total_bce += comps.get('bce', 0.0)
         num_batches += 1
-        total_nodes += N_batch
 
         p_los_np = p_los.squeeze().cpu().numpy()
-        log_sigma_np = log_sigma.squeeze().cpu().numpy()
+        mu_nlos_np = mu_nlos.squeeze().cpu().numpy()
+        log_sigma_nlos_np = log_sigma_nlos.squeeze().cpu().numpy()
         elev_np = elevation_deg.squeeze().cpu().numpy()
         p_nlos_pred = 1.0 - p_los_np
         nlos_lab = nlos_labels.squeeze().cpu().numpy()
@@ -666,14 +738,14 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
             all_labels.append(float(nlos_lab))
             all_p_los_vals.append(float(p_los_np))
             all_nlos_labels_vals.append(float(nlos_lab))
-            all_log_sigma_vals.append(float(log_sigma_np))
+            all_log_sigma_vals.append(float(log_sigma_nlos_np))
             all_elevations.append(float(elev_np))
         else:
             all_preds.extend(p_nlos_pred.flatten().tolist())
             all_labels.extend(nlos_lab.flatten().tolist())
             all_p_los_vals.extend(p_los_np.flatten().tolist())
             all_nlos_labels_vals.extend(nlos_lab.flatten().tolist())
-            all_log_sigma_vals.extend(log_sigma_np.flatten().tolist())
+            all_log_sigma_vals.extend(log_sigma_nlos_np.flatten().tolist())
             all_elevations.extend(elev_np.flatten().tolist())
 
     if all_preds and all_labels:
@@ -693,14 +765,14 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         accuracy = precision = recall = f1 = 0.0
 
     metrics = {
-        'loss': total_loss / max(total_nodes, 1),
+        'loss': total_loss / max(num_batches, 1),
         'accuracy': accuracy,
         'precision': precision,
         'recall': recall,
         'f1': f1,
     }
     if total_bce > 0:
-        metrics['bce'] = total_bce / max(total_nodes, 1)
+        metrics['bce'] = total_bce / max(num_batches, 1)
 
     if all_p_los_vals:
         p_los_arr = np.array(all_p_los_vals)
@@ -713,10 +785,16 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         metrics['p_los_los_avg'] = float(np.mean(p_los_arr[los_mask])) if los_mask.any() else 0.0
         metrics['p_los_nlos_avg'] = float(np.mean(p_los_arr[nlos_mask])) if nlos_mask.any() else 0.0
     if all_log_sigma_vals:
-        log_sigma_arr = np.array(all_log_sigma_vals)
-        sigma_arr = np.exp(log_sigma_arr)
-        metrics['log_sigma_mean'] = float(np.mean(log_sigma_arr))
+        log_sigma_nlos_arr = np.array(all_log_sigma_vals)
+        sigma_arr = np.exp(log_sigma_nlos_arr)
+        metrics['log_sigma_nlos_mean'] = float(np.mean(log_sigma_nlos_arr))
         metrics['sigma_mean'] = float(np.mean(sigma_arr))
+        if len(all_nlos_labels_vals) == len(all_log_sigma_vals):
+            nlab = np.array(all_nlos_labels_vals)
+            sl = sigma_arr[nlab == 0]; sn = sigma_arr[nlab == 1]
+            if len(sl): metrics['sigma_nlos_los'] = float(np.mean(sl))
+            if len(sn): metrics['sigma_nlos_nlos'] = float(np.mean(sn))
+            if len(sl) and len(sn): metrics['sigma_nlos_gap'] = float(np.mean(sn) - np.mean(sl))
     if all_elevations:
         elev_arr = np.array(all_elevations)
         neg_mask = elev_arr < 0
@@ -727,8 +805,9 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
 
     return metrics
 
+
 def create_optimizer_and_scheduler(model: nn.Module, config: Config):
-    """Create AdamW optimizer and ReduceLROnPlateau scheduler."""
+    """Create optimizer and learning rate scheduler"""
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.LEARNING_RATE,
@@ -743,18 +822,18 @@ def create_optimizer_and_scheduler(model: nn.Module, config: Config):
         )
     return optimizer, scheduler
 
+
 # ============================================================
 # Part 4: Main Entry
 # ============================================================
 
 def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = None, exp_name: str = None):
-    """Complete training pipeline entry point.
+    """Complete training pipeline entry point
 
     Args:
-        resume_from:   path to checkpoint .pth file to resume training from.
-        num_epochs:    override config.NUM_EPOCHS.
-        dataset_name:  override config.DATASETS (single dataset).
-        exp_name:      override experiment directory name (e.g., 'exp_005').
+        resume_from: checkpoint path, continue training from this checkpoint.
+        num_epochs:  override NUM_EPOCHS config.
+        dataset_name: override DATASETS config.
     """
     config = get_config()
     if num_epochs is not None:
@@ -813,7 +892,6 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
                                 pin_memory=True, collate_fn=batch_collate_fn,
                                 drop_last=False)
     else:
-
         train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True,
                                   num_workers=0, collate_fn=lambda x: x[0])
         val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
@@ -826,29 +904,38 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         num_layers=config.NUM_LAYERS,
         dropout=config.DROPOUT,
     ).to(device)
+
     print(f"\nModel: {sum(p.numel() for p in model.parameters()):,} parameters")
 
-    loss_fn = NLOSLoss(
-        pos_weight=config.POS_WEIGHT,
-        label_smoothing=config.LABEL_SMOOTHING,
-        lambda_bce=config.LAMBDA_BCE,
-        p_los_smoothing=config.P_LOS_SMOOTHING,
-        lambda_entropy=config.LAMBDA_ENTROPY,
-        lambda_unc=config.LAMBDA_UNC,
+    nlos_loss_bce = NLOSLoss(
+        pos_weight=config.POS_WEIGHT, label_smoothing=config.LABEL_SMOOTHING,
+        lambda_bce=config.LAMBDA_BCE, p_los_smoothing=config.P_LOS_SMOOTHING,
+        lambda_entropy=config.LAMBDA_ENTROPY, lambda_unc=config.LAMBDA_UNC,
         lambda_elevation_prior=config.LAMBDA_ELEVATION_PRIOR,
     )
+    loss_fn = nlos_loss_bce
+    mog_loss_fn = MoGNLLLoss(
+        lambda_entropy=config.LAMBDA_ENTROPY,
+        lambda_elevation_prior=config.LAMBDA_ELEVATION_PRIOR,
+        lambda_mu_reg=config.LAMBDA_MU_REG,
+        lambda_sigma_reg=config.LAMBDA_SIGMA_REG,
+        sigma_gap_target=config.SIGMA_GAP_TARGET,
+        lambda_sigma_sep=config.LAMBDA_SIGMA_SEP,
+    ) if config.USE_MIXTURE_GAUSSIAN else None
+
     optimizer, scheduler = create_optimizer_and_scheduler(model, config)
 
-    # AMP scaler (PyTorch 2.x torch.amp API)
+    # AMP scaler
     scaler = GradScaler('cuda') if config.USE_AMP and device.type == 'cuda' else None
     if scaler is not None:
         print("AMP: enabled (automatic mixed precision)")
 
-    # ---- Setup experiment directories and checkpoint resume ----
+    # Handle experiment directory and checkpoint resume
     start_epoch = 0
     checkpoint_dir = None
     tensorboard_dir = None
 
+    # Setup experiment directories
     if resume_from and os.path.exists(resume_from):
         exp_dir = os.path.dirname(os.path.dirname(resume_from))
         checkpoint_dir = os.path.dirname(resume_from)
@@ -857,11 +944,9 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         exp_dir = os.path.join(config.RESULT_DIR, config._exp_name)
         checkpoint_dir = os.path.join(exp_dir, 'checkpoints')
         tensorboard_dir = config.TENSORBOARD_DIR or os.path.join(exp_dir, 'tensorboard')
-        try: os.makedirs(checkpoint_dir, exist_ok=True)
-        except PermissionError: pass
+        os.makedirs(checkpoint_dir, exist_ok=True)
         if config.USE_TENSORBOARD:
-            try: os.makedirs(tensorboard_dir, exist_ok=True)
-            except PermissionError: pass
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
         # Auto-resume from latest checkpoint if available
         if os.path.isdir(checkpoint_dir):
@@ -876,17 +961,15 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         exp_dir = os.path.join(config.RESULT_DIR, f'exp_{exp_id:03d}')
         checkpoint_dir = os.path.join(exp_dir, 'checkpoints')
         tensorboard_dir = config.TENSORBOARD_DIR or os.path.join(exp_dir, 'tensorboard')
-        try: os.makedirs(checkpoint_dir, exist_ok=True)
-        except PermissionError: pass
+        os.makedirs(checkpoint_dir, exist_ok=True)
         if config.USE_TENSORBOARD:
-            try: os.makedirs(tensorboard_dir, exist_ok=True)
-            except PermissionError: pass
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
     print(f"Experiment dir: {exp_dir}")
     if config.USE_TENSORBOARD:
         print(f"TensorBoard dir: {tensorboard_dir}")
 
-    # Resume from checkpoint (explicit or auto-detected)
+    # Resume from checkpoint (either explicit or auto-detected)
     if resume_from and os.path.exists(resume_from):
         print(f"\n{'='*60}")
         print(f"Resuming from checkpoint: {resume_from}")
@@ -897,9 +980,11 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         if scheduler is not None and 'scheduler_state_dict' in checkpoint:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        print(f"  Loaded checkpoint: epoch={checkpoint['epoch']+1} (resuming from epoch {start_epoch+1})")
+        print(f"  Loaded checkpoint: epoch={checkpoint['epoch']} (resuming from epoch {start_epoch+1})")
         if 'val_loss' in checkpoint:
             print(f"  Checkpoint val_loss: {checkpoint['val_loss']:.4f}")
+        if 'val_loss' in checkpoint:
+            best_val_loss = checkpoint['val_loss']
         print(f"  Experiment dir: {exp_dir}")
 
     writer = None
@@ -936,6 +1021,9 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
             log_interval=config.LOG_INTERVAL,
             writer=writer, global_step=epoch,
             scaler=scaler, use_amp=config.USE_AMP,
+            mog_loss_fn=mog_loss_fn, nlos_loss_bce=nlos_loss_bce,
+            mog_pure_bce_epochs=config.MOG_PURE_BCE_EPOCHS,
+            mog_blend_epochs=config.MOG_BLEND_EPOCHS,
         )
 
         val_metrics = evaluate(model, val_loader, loss_fn, device)
@@ -1034,5 +1122,7 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         print(f"TensorBoard logs: {tensorboard_dir}")
         print(f"  Run: tensorboard --logdir={tensorboard_dir}")
 
+
 if __name__ == '__main__':
     main()
+

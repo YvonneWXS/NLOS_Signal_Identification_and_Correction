@@ -312,7 +312,6 @@ def analyze_experiment(exp_name, dataset_name, config):
     # 鍙屽嘲妫€娴?    los_high = float(np.sum(p_los_los > 0.7) / max(len(p_los_los), 1))
     nlos_low = float(np.sum(p_los_nlos < 0.3) / max(len(p_los_nlos), 1))
     print(f"\n--- Bimodality check ---")
-    los_high = (all_p_los[all_nlos==0] > 0.7).float().mean()
     print(f"  LOS samples with p_los>0.7: {los_high*100:.1f}%")
     print(f"  NLOS samples with p_los<0.3: {nlos_low*100:.1f}%")
     results['los_p_high_pct'] = float(los_high * 100)

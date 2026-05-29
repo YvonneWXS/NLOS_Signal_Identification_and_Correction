@@ -1,5 +1,5 @@
-﻿"""
-Full training script 鈥?processes dataset and runs training epochs
+"""
+Full training script — processes dataset and runs training epochs
 Usage:
   Single:  python run_full_training.py --dataset berlin1_potsdamer_platz
   Parallel (4 terminals):
@@ -44,6 +44,5 @@ if __name__ == '__main__':
     print(f"Step 2: Starting {config.NUM_EPOCHS}-epoch training")
     print("=" * 60)
 
-    from GAT_V2025 import main
+    from GAT_V2026 import main
     main(dataset_name=args.dataset, exp_name=args.exp_name)
-
