@@ -13,10 +13,10 @@ PYTHON = r"D:\1_developTool\4_conda\envs\smartLoc\python.exe"
 SRC_DIR = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\RadioGAT-Multi-band-Radiomap-Reconstruction"
 
 EXPERIMENTS = [
-    ("berlin1_potsdamer_platz", "exp_008"),
-    ("berlin2_gendarmenmarkt", "exp_009"),
-    ("frankfurt1_maintower", "exp_010"),
-    ("frankfurt2_westendtower", "exp_011"),
+    ("berlin1_potsdamer_platz", "exp_016"),
+    ("berlin2_gendarmenmarkt", "exp_017"),
+    ("frankfurt1_maintower", "exp_018"),
+    ("frankfurt2_westendtower", "exp_019"),
 ]
 
 
@@ -71,19 +71,7 @@ def main():
             failed.append(exp_name)
             continue
         
-        # Step 2: Analysis
-        analysis_cmd = [
-            PYTHON, "generate_report.py",
-            "--exp", exp_name,
-            "--dataset", dataset,
-        ]
-        rc2 = run_cmd(analysis_cmd, f"Analysis {exp_name}")
-        
-        if rc2 == 0:
-            completed += 1
-        else:
-            print(f"\n*** WARNING: {exp_name} analysis failed ***")
-            failed.append(f"{exp_name} (analysis)")
+        completed += 1
     
     total_elapsed = time.time() - total_start
     print(f"\n{'='*60}")

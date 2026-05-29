@@ -25,7 +25,7 @@ class Config:
 
     DATASETS = [
         'berlin1_potsdamer_platz',
-    ]
+    ]  # override via --dataset flag
 
     # ========== Data Processing Config ==========
     NEED_PROCESS_DATA = True
@@ -80,7 +80,7 @@ class Config:
     MU_NLOS_MAX = 500.0
     SIGMA_NLOS_MIN = 0.05  # lowered to match new clamp
     SIGMA_NLOS_MAX = 200.0
-    LAMBDA_MU_REG = 0.005  # 5x stronger: 0.001→0.005
+    LAMBDA_MU_REG = 0.02  # stronger: prevent mu_nlos collapse during blend  # 5x stronger: 0.001→0.005
     LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001→0.01
     SIGMA_GAP_TARGET = 0.5  # increased: 0.3→0.5 km
     LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0→5.0

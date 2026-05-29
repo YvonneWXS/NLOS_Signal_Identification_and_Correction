@@ -157,7 +157,7 @@ class NLOSGAT(nn.Module):
         nn.init.normal_(self.p_los_head.weight, mean=0.0, std=0.01)
         nn.init.constant_(self.mu_nlos_head.bias, -2.0)  # softplus(-2.0) ≈ 0.127 km
         nn.init.normal_(self.mu_nlos_head.weight, mean=0.0, std=0.01)
-        nn.init.constant_(self.log_sigma_los_head.bias, -6.0)
+        nn.init.constant_(self.log_sigma_los_head.bias, -2.0)  # exp(-2.0)?0.135 km, was -6.0?0.0025
         nn.init.normal_(self.log_sigma_los_head.weight, mean=0.0, std=0.01)
         nn.init.constant_(self.log_sigma_nlos_head.bias, -3.0)
         nn.init.normal_(self.log_sigma_nlos_head.weight, mean=0.0, std=0.01)
@@ -375,7 +375,7 @@ class MoGNLLLoss(nn.Module):
                 gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
                 total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
         # Sigma centering: soft pull toward physical ranges
-        sigma_center_loss = ((sigma_los - 0.2).pow(2).mean() + (sigma_nlos - 0.8).pow(2).mean()) * 0.005
+        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.001 + (sigma_nlos - 1.5).pow(2).mean() * 0.0005)
         total_loss = total_loss + sigma_center_loss
 
         if return_components:
@@ -903,12 +903,15 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         metrics['mu_nlos_max'] = float(np.max(mu_arr))
     if all_sigma_los_vals_from_model:
         sl_arr = np.array(all_sigma_los_vals_from_model)
+        sn_arr = np.array(sigma_arr)  # sigma_nlos from log_sigma_nlos head
         metrics['sigma_los_mean'] = float(np.mean(sl_arr))
         metrics['sigma_nlos_from_model_mean'] = float(np.mean(sigma_arr)) if len(all_log_sigma_vals) else 0
         if len(all_nlos_labels_vals) == len(all_sigma_los_vals_from_model):
             nlab = np.array(all_nlos_labels_vals)
             sl_los = sl_arr[nlab == 0]; sl_nlos = sl_arr[nlab == 1]
-            if len(sl_los) and len(sl_nlos): metrics['sigma_true_gap'] = float(np.mean(sl_nlos) - np.mean(sl_los))
+            if len(sl_los) and len(sl_nlos): 
+                sn_nlos_gap = sn_arr[nlab == 1]
+                metrics['sigma_sep'] = float(np.mean(sn_nlos_gap) - np.mean(sl_los))
 
     return metrics
 
@@ -1185,8 +1188,8 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
                 mog_parts = [f"mu_nlos=[{val_metrics['mu_nlos_mean']:.4f}"]
                 if 'sigma_los_mean' in val_metrics:
                     mog_parts.append(f"sigma_los={val_metrics['sigma_los_mean']:.4f}")
-                if 'sigma_true_gap' in val_metrics:
-                    mog_parts.append(f"sigma_gap={val_metrics['sigma_true_gap']:.4f}")
+                if 'sigma_sep' in val_metrics:
+                    mog_parts.append(f"sigma_sep={val_metrics['sigma_sep']:.4f}")
                 mog_parts.append("]")
                 print(f"  MoG: " + " ".join(mog_parts))
 
@@ -1213,8 +1216,8 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
                         writer.add_scalar('Val/mu_nlos_mean', val_metrics['mu_nlos_mean'], step)
                     if 'sigma_los_mean' in val_metrics:
                         writer.add_scalar('Val/sigma_los_mean', val_metrics['sigma_los_mean'], step)
-                    if 'sigma_true_gap' in val_metrics:
-                        writer.add_scalar('Val/sigma_true_gap', val_metrics['sigma_true_gap'], step)
+                    if 'sigma_sep' in val_metrics:
+                        writer.add_scalar('Val/sigma_sep', val_metrics['sigma_sep'], step)
                 writer.add_scalar('LR', lr, step)
 
                 if (epoch + 1) % config.LOG_HISTOGRAM_EPOCHS == 0:
