@@ -73,14 +73,15 @@ class Config:
     USE_MIXTURE_GAUSSIAN = True
 
     # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 15  # extended: 10→15 for backbone convergence
+    MOG_PURE_BCE_EPOCHS = 10  # shortened: 15?10 to reduce freeze window
     MOG_BLEND_EPOCHS = 35  # adjusted: 40→35 to fit 100ep total
     # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
     SIGMA_NLOS_MIN = 0.05  # lowered to match new clamp
     SIGMA_NLOS_MAX = 200.0
-    LAMBDA_MU_REG = 0.02  # stronger: prevent mu_nlos collapse during blend  # 5x stronger: 0.001→0.005
+    LAMBDA_MU_REG = 0.05  # stronger: prevent mu_nlos collapse during blend
+    LAMBDA_MU_WARMUP_REG = 0.03  # mu supervision weight during pure BCE warmup
     LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001→0.01
     SIGMA_GAP_TARGET = 0.5  # increased: 0.3→0.5 km
     LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0→5.0

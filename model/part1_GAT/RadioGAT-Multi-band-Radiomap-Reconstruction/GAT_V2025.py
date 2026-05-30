@@ -375,7 +375,7 @@ class MoGNLLLoss(nn.Module):
                 gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
                 total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
         # Sigma centering: soft pull toward physical ranges
-        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.001 + (sigma_nlos - 1.5).pow(2).mean() * 0.0005)
+        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.01 + (sigma_nlos - 1.5).pow(2).mean() * 0.005)
         total_loss = total_loss + sigma_center_loss
 
         if return_components:
@@ -550,14 +550,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
     use_mog_loss_fn = mog_loss_fn is not None and nlos_loss_bce is not None
     is_pure_bce = use_mog_loss_fn and (epoch < mog_pure_bce_epochs)
     is_blend = use_mog_loss_fn and (mog_pure_bce_epochs <= epoch < mog_pure_bce_epochs + mog_blend_epochs)
-    if is_pure_bce:
-        for p in model.mu_nlos_head.parameters(): p.requires_grad = False
-        for p in model.log_sigma_los_head.parameters(): p.requires_grad = False
-        for p in model.log_sigma_nlos_head.parameters(): p.requires_grad = False
-    else:
-        for p in model.mu_nlos_head.parameters(): p.requires_grad = True
-        for p in model.log_sigma_los_head.parameters(): p.requires_grad = True
-        for p in model.log_sigma_nlos_head.parameters(): p.requires_grad = True
+    # All heads remain trainable throughout training (no freeze for mu_nlos/sigma heads)
     lam = 0.5 * (1 + math.cos(math.pi * (epoch - mog_pure_bce_epochs) / max(mog_blend_epochs, 1))) if is_blend else 0.0  # cosine schedule
     all_p_los = []
     all_log_sigma = []
@@ -607,9 +600,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
             if is_pure_bce:
                 loss, components = nlos_loss_bce(p_los, log_sigma_nlos, pseudorange_errors,
                                     nlos_labels, elevation=elevation_deg, return_components=True)
-                # Light L2 supervision: pull mu_nlos toward 0.15 km during BCE warmup
-                mu_reg = 0.001 * (mu_nlos - 0.15).pow(2).mean()
-                loss = loss + mu_reg
+                # L2 supervision: pull mu_nlos toward 0.15 km + sigma centering during BCE warmup
+                mu_reg = 0.03 * (mu_nlos - 0.15).pow(2).mean()
+                sigma_warmup_reg = 0.01 * ((torch.exp(log_sigma_los) - 0.3).pow(2).mean()
+                                          + (torch.exp(log_sigma_nlos) - 1.5).pow(2).mean())
+                loss = loss + mu_reg + sigma_warmup_reg
                 components['mu_reg'] = mu_reg.item()
             elif is_blend:
                 bce_loss_fn = bce_only_loss if bce_only_loss is not None else nlos_loss_bce
