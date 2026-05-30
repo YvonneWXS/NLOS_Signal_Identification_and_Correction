@@ -362,7 +362,7 @@ class MoGNLLLoss(nn.Module):
         if self.lambda_entropy > 0:
             ent = -(p_safe*torch.log(p_safe) + (1-p_safe)*torch.log(1-p_safe))
             total_loss -= self.lambda_entropy * ent.mean()
-        total_loss += self.lambda_mu_reg * (mu_nlos**2).mean()
+        total_loss += self.lambda_mu_reg * ((mu_nlos - self.mu_target)**2).mean()
         total_loss += self.lambda_sigma_reg * (log_sigma_nlos**2).mean()
         if elevation is not None and self.lambda_elevation_prior > 0:
             below = (elevation.squeeze() < 0).float()
@@ -375,7 +375,7 @@ class MoGNLLLoss(nn.Module):
                 gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
                 total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
         # Sigma centering: soft pull toward physical ranges
-        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.01 + (sigma_nlos - 1.5).pow(2).mean() * 0.005)
+        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.05 + (sigma_nlos - 1.5).pow(2).mean() * 0.005)
         total_loss = total_loss + sigma_center_loss
 
         if return_components:
@@ -395,12 +395,13 @@ class SupervisedComponentNLLLoss(nn.Module):
     NLOS samples -> fit Gaussian(mu_nlos, sigma_nlos).
     """
     def __init__(self, lambda_mu_reg=0.001, lambda_sigma_reg=0.001,
-                 sigma_gap_target=0.3, lambda_sigma_sep=1.0):
+                 sigma_gap_target=0.3, lambda_sigma_sep=1.0, mu_target=0.15):
         super().__init__()
         self.lambda_mu_reg = lambda_mu_reg
         self.lambda_sigma_reg = lambda_sigma_reg
         self.sigma_gap_target = sigma_gap_target
         self.lambda_sigma_sep = lambda_sigma_sep
+        self.mu_target = mu_target
         self.eps = 1e-6
 
     def forward(self, mu_nlos, log_sigma_los, log_sigma_nlos,
@@ -435,7 +436,7 @@ class SupervisedComponentNLLLoss(nn.Module):
                             + 0.5 * _m.log(2 * _m.pi)).mean()
             total_loss = total_loss + nll_nlos_val
 
-        total_loss = total_loss + self.lambda_mu_reg * (mu_nlos**2).mean()
+        total_loss = total_loss + self.lambda_mu_reg * ((mu_nlos - self.mu_target)**2).mean()
         total_loss = total_loss + self.lambda_sigma_reg * (log_sigma_nlos**2).mean()
 
         if self.lambda_sigma_sep > 0 and los_mask.any() and nlos_mask.any():
@@ -601,7 +602,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 loss, components = nlos_loss_bce(p_los, log_sigma_nlos, pseudorange_errors,
                                     nlos_labels, elevation=elevation_deg, return_components=True)
                 # L2 supervision: pull mu_nlos toward 0.15 km + sigma centering during BCE warmup
-                mu_reg = 0.03 * (mu_nlos - 0.15).pow(2).mean()
+                mu_reg = 0.05 * (mu_nlos - 0.15).pow(2).mean()
                 sigma_warmup_reg = 0.01 * ((torch.exp(log_sigma_los) - 0.3).pow(2).mean()
                                           + (torch.exp(log_sigma_nlos) - 1.5).pow(2).mean())
                 loss = loss + mu_reg + sigma_warmup_reg
@@ -1040,12 +1041,14 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         lambda_sigma_reg=config.LAMBDA_SIGMA_REG,
         sigma_gap_target=config.SIGMA_GAP_TARGET,
         lambda_sigma_sep=config.LAMBDA_SIGMA_SEP,
+        mu_target=config.MU_NLOS_TARGET,
     ) if config.USE_MIXTURE_GAUSSIAN else None
     sup_loss_fn = SupervisedComponentNLLLoss(
         lambda_mu_reg=config.LAMBDA_MU_REG,
         lambda_sigma_reg=config.LAMBDA_SIGMA_REG,
         sigma_gap_target=config.SIGMA_GAP_TARGET,
         lambda_sigma_sep=config.LAMBDA_SIGMA_SEP,
+        mu_target=config.MU_NLOS_TARGET,
     ) if config.USE_MIXTURE_GAUSSIAN else None
 
     optimizer, scheduler = create_optimizer_and_scheduler(model, config)
