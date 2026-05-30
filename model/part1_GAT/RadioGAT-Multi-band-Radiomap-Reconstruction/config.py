@@ -73,16 +73,17 @@ class Config:
     USE_MIXTURE_GAUSSIAN = True
 
     # ========== MoG (Mixture of Gaussians) Config ==========
-    MOG_PURE_BCE_EPOCHS = 10  # shortened: 15?10 to reduce freeze window
-    MOG_BLEND_EPOCHS = 35  # adjusted: 40→35 to fit 100ep total
+    MOG_PURE_BCE_EPOCHS = 8  # Fix 4: shorter warmup (10?8)
+    MOG_BLEND_EPOCHS = 25  # Fix 4: faster blend (35?25)
     # SIGMA_LOS_FIXED = 2.0  # deprecated: sigma_los now learnable
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
     SIGMA_NLOS_MIN = 0.05  # lowered to match new clamp
     SIGMA_NLOS_MAX = 200.0
-    LAMBDA_MU_REG = 0.10  # Fix 2: target-centered mu anchor (stronger: 0.05?0.10)
+    LAMBDA_MU_REG = 0.30  # Fix 3: strong anchor (0.10?0.30)
     LAMBDA_MU_WARMUP_REG = 0.05  # mu supervision weight during pure BCE warmup
     MU_NLOS_TARGET = 0.15  # L2 anchor for mu_nlos (km), shared across all phases
+    LAMBDA_BCE_IN_NLL = 1.5  # Fix 3: BCE weight in pure NLL phase (3:1 over NLL)
     LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001→0.01
     SIGMA_GAP_TARGET = 0.5  # increased: 0.3→0.5 km
     LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0→5.0

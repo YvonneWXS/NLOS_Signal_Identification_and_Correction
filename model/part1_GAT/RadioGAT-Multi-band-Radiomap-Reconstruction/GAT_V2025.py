@@ -326,7 +326,8 @@ class NLOSLoss(nn.Module):
 class MoGNLLLoss(nn.Module):
     """Mixture of Gaussians NLL Loss."""
     def __init__(self, lambda_entropy=0.03, lambda_elevation_prior=0.1,
-                 lambda_mu_reg=0.001, lambda_sigma_reg=0.001, sigma_gap_target=0.5, lambda_sigma_sep=0.1):
+                 lambda_mu_reg=0.001, lambda_sigma_reg=0.001, sigma_gap_target=0.5, lambda_sigma_sep=0.1,
+                 mu_target=0.15):
         super().__init__()
         self.lambda_entropy = lambda_entropy
         self.lambda_elevation_prior = lambda_elevation_prior
@@ -334,6 +335,7 @@ class MoGNLLLoss(nn.Module):
         self.lambda_sigma_reg = lambda_sigma_reg
         self.sigma_gap_target = sigma_gap_target
         self.lambda_sigma_sep = lambda_sigma_sep
+        self.mu_target = mu_target
         self.eps = 1e-6
 
     def forward(self, p_los, mu_nlos, log_sigma_los, log_sigma_nlos, pseudorange_error,
@@ -375,7 +377,7 @@ class MoGNLLLoss(nn.Module):
                 gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
                 total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
         # Sigma centering: soft pull toward physical ranges
-        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.05 + (sigma_nlos - 1.5).pow(2).mean() * 0.005)
+        sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.10 + (sigma_nlos - 1.5).pow(2).mean() * 0.01)
         total_loss = total_loss + sigma_center_loss
 
         if return_components:
@@ -628,7 +630,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                                     pseudorange_errors, nlos_labels, elevation=elevation_deg, return_components=True)
                 target_los = 1.0 - nlos_labels.squeeze()
                 loss_bce = F.binary_cross_entropy(p_los.squeeze(), target_los, reduction='mean')
-                loss = loss_nll + loss_bce
+                loss = loss_nll * 0.5 + loss_bce * 1.5  # BCE 3x weight over NLL
         else:
             try:
                 loss, components = loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
