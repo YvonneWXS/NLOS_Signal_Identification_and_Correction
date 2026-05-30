@@ -1231,7 +1231,7 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         # R3: Composite metric (F1*0.7 + sigma_sep*0.3) for MoG best_model selection
         if config.USE_MIXTURE_GAUSSIAN:
             sigma_sep = val_metrics.get('sigma_sep', 0)
-            val_metric_for_best = -(val_metrics['f1'] * 0.7 + min(sigma_sep / 2.0, 1.0) * 0.3)
+            val_metric_for_best = -val_metrics['f1']  # P0 fix: F1-only selection (was composite F1*0.7+sigma_sep*0.3)
         else:
             val_metric_for_best = val_metrics['loss']
         if val_metric_for_best < best_val_loss:
