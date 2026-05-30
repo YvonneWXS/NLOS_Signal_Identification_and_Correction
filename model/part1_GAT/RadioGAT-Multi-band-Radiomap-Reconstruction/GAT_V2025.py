@@ -630,7 +630,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                                     pseudorange_errors, nlos_labels, elevation=elevation_deg, return_components=True)
                 target_los = 1.0 - nlos_labels.squeeze()
                 loss_bce = F.binary_cross_entropy(p_los.squeeze(), target_los, reduction='mean')
-                loss = loss_nll * 0.5 + loss_bce * 1.5  # BCE 3x weight over NLL
+                loss = loss_nll * 0.1 + loss_bce * 1.0  # Fix 5: BCE 10x dominant over NLL
         else:
             try:
                 loss, components = loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
@@ -924,7 +924,7 @@ def create_optimizer_and_scheduler(model: nn.Module, config: Config):
     excluded_ids = set(id(p) for p in (p_los_params + mu_nlos_params + sigma_los_params + sigma_nlos_params))
     other_params = [p for p in model.parameters() if id(p) not in excluded_ids]
     optimizer = torch.optim.AdamW([
-        {'params': p_los_params, 'lr': config.LEARNING_RATE * 4},       # 2e-4
+        {'params': p_los_params, 'lr': config.LEARNING_RATE * 10},      # 5e-4, Fix 5: stronger classification
         {'params': mu_nlos_params, 'lr': config.LEARNING_RATE},         # 5e-5
         {'params': sigma_los_params, 'lr': config.LEARNING_RATE},       # 5e-5
         {'params': sigma_nlos_params, 'lr': config.LEARNING_RATE},      # 5e-5
