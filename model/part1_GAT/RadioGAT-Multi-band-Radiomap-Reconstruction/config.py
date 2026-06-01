@@ -46,7 +46,7 @@ class Config:
 
     # ========== Training Config ==========
     LEARNING_RATE = 5e-5
-    NUM_EPOCHS = 100
+    NUM_EPOCHS = 50
     BATCH_SIZE = 32
     VALIDATION_SPLIT = 0.2
     GRADIENT_CLIP = 1.0

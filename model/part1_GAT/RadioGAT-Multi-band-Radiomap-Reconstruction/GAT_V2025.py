@@ -1025,8 +1025,12 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
 
     # Fix 6D: Auto-compute pos_weight from dataset NLOS ratio
     if config.AUTO_POS_WEIGHT:
-        total_nlos = sum(1 for ep in all_epochs for lb in ep.get('nlos_labels', []) if lb == 1)
-        total_obs = sum(len(ep.get('nlos_labels', [])) for ep in all_epochs)
+        total_nlos = 0
+        total_obs = 0
+        for ep in all_epochs:
+            obs_list = getattr(ep, 'observations', [])
+            total_obs += len(obs_list)
+            total_nlos += sum(1 for obs in obs_list if getattr(obs, 'nlos_label', 0) == 1)
         if total_obs > 0:
             nlos_ratio = total_nlos / total_obs
             if nlos_ratio < 0.30:
