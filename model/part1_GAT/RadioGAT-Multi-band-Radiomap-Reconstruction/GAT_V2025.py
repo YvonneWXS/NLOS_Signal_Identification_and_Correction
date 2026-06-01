@@ -917,6 +917,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader,
         sigma_arr = np.exp(log_sigma_nlos_arr)
         metrics['log_sigma_nlos_mean'] = float(np.mean(log_sigma_nlos_arr))
         metrics['sigma_mean'] = float(np.mean(sigma_arr))
+        metrics['sigma_nlos_max'] = float(np.max(sigma_arr))
         if len(all_nlos_labels_vals) == len(all_log_sigma_vals):
             nlab = np.array(all_nlos_labels_vals)
             sl = sigma_arr[nlab == 0]; sn = sigma_arr[nlab == 1]
@@ -1248,6 +1249,41 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
                     mog_parts.append(f"sigma_sep={val_metrics['sigma_sep']:.4f}")
                 mog_parts.append("]")
                 print(f"  MoG: " + " ".join(mog_parts))
+
+        # Fix 6 Gate Check: epoch-60 warning for unmet verification criteria
+        if epoch >= 59:
+            warnings = []
+            # Gate 1: sigma_nlos(NLOS) / sigma_nlos(LOS) > 1.20
+            sn_los = val_metrics.get('sigma_nlos_los', 0)
+            sn_nlos = val_metrics.get('sigma_nlos_nlos', 0)
+            if sn_los > 0 and sn_nlos > 0:
+                ratio = sn_nlos / sn_los
+                if ratio <= 1.20:
+                    warnings.append(f"Gate1: sigma_nlos sep ratio={ratio:.3f} <= 1.20")
+            # Gate 2: sigma_nlos.max() < 15.0 km
+            sn_max = val_metrics.get('sigma_nlos_max', 0)
+            if sn_max >= 15.0:
+                warnings.append(f"Gate2: sigma_nlos max={sn_max:.1f} >= 15.0 km")
+            # Gate 3: F1 thresholds
+            f1 = val_metrics.get('f1', 0)
+            dataset_name = config.DATASETS[0] if config.DATASETS else ''
+            if 'berlin' in dataset_name.lower():
+                if f1 < 0.840:
+                    warnings.append(f"Gate3: F1={f1:.4f} < 0.840")
+            elif 'frankfurt1' in dataset_name.lower():
+                if f1 < 0.825:
+                    warnings.append(f"Gate3: F1={f1:.4f} < 0.825")
+            elif 'frankfurt2' in dataset_name.lower():
+                if f1 < 0.800:
+                    warnings.append(f"Gate3: F1={f1:.4f} < 0.800")
+            # Gate 4: p_los gap > 0.55
+            los_avg = val_metrics.get('p_los_los_avg', 0)
+            nlos_avg = val_metrics.get('p_los_nlos_avg', 0)
+            gap = los_avg - nlos_avg
+            if gap <= 0.55:
+                warnings.append(f"Gate4: p_los gap={gap:.4f} <= 0.55")
+            if warnings:
+                print(f"  *** Fix 6 GATE WARNING (epoch {epoch+1}): " + "; ".join(warnings) + " ***")
 
         if writer is not None:
             try:
