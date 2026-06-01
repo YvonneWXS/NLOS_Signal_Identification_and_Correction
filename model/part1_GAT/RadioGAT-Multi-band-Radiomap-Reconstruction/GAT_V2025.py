@@ -199,8 +199,11 @@ class NLOSGAT(nn.Module):
         mu_nlos_raw = self.mu_nlos_head(h)
         mu_nlos = F.softplus(mu_nlos_raw)
         mu_nlos = torch.clamp(mu_nlos, 0.0, 500.0)  # match MU_NLOS_MAX
-        log_sigma_los = self.log_sigma_los_head(h)
-        log_sigma_nlos = self.log_sigma_nlos_head(h)
+        log_sigma_los_raw = self.log_sigma_los_head(h)
+        log_sigma_nlos_raw = self.log_sigma_nlos_head(h)
+        # Fix 6B: hard clamp in log-space (exp(-3.0)=0.05, exp(2.0)=7.4, exp(2.5)=12.2 km)
+        log_sigma_los = torch.clamp(log_sigma_los_raw, min=-3.0, max=2.0)
+        log_sigma_nlos = torch.clamp(log_sigma_nlos_raw, min=-3.0, max=2.5)
 
         return p_los, mu_nlos, log_sigma_los, log_sigma_nlos
 
@@ -370,12 +373,19 @@ class MoGNLLLoss(nn.Module):
             below = (elevation.squeeze() < 0).float()
             if below.sum() > 0:
                 total_loss += self.lambda_elevation_prior * torch.relu(p_los-0.3).mul(below).mean()
-        # Sigma separation loss: push sigma_nlos(NLOS) >> sigma_nlos(LOS)
+        # Fix 6A: Per-sample sigma separation loss (was batch-statistic gap)
         if self.lambda_sigma_sep > 0:
             lm = (nlos_label.squeeze()==0); nm = (nlos_label.squeeze()==1)
-            if lm.any() and nm.any():
-                gap = sigma_nlos[nm].mean() - sigma_nlos[lm].mean()
-                total_loss += self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
+            if nm.any():
+                # NLOS samples: sigma_nlos must be > sigma_los + gap_target
+                per_gap_nlos = sigma_nlos[nm] - sigma_los[nm]
+                nlos_sep = torch.relu(self.sigma_gap_target - per_gap_nlos).mean()
+                total_loss += self.lambda_sigma_sep * nlos_sep
+            if lm.any():
+                # LOS samples: soft penalty when sigma_nlos > sigma_los + gap_target (weight x0.2)
+                per_gap_los = sigma_nlos[lm] - sigma_los[lm] - self.sigma_gap_target
+                los_sep = torch.relu(per_gap_los).mean()
+                total_loss += self.lambda_sigma_sep * 0.2 * los_sep
         # Sigma centering: soft pull toward physical ranges
         sigma_center_loss = ((sigma_los - 0.3).pow(2).mean() * 0.10 + (sigma_nlos - 1.5).pow(2).mean() * 0.01)
         total_loss = total_loss + sigma_center_loss
@@ -441,9 +451,16 @@ class SupervisedComponentNLLLoss(nn.Module):
         total_loss = total_loss + self.lambda_mu_reg * ((mu_nlos - self.mu_target)**2).mean()
         total_loss = total_loss + self.lambda_sigma_reg * (log_sigma_nlos**2).mean()
 
-        if self.lambda_sigma_sep > 0 and los_mask.any() and nlos_mask.any():
-            gap = sigma_nlos[nlos_mask].mean() - sigma_los[los_mask].mean()
-            total_loss = total_loss + self.lambda_sigma_sep * torch.relu(self.sigma_gap_target - gap)
+        # Fix 6A: Per-sample sigma separation
+        if self.lambda_sigma_sep > 0:
+            if nlos_mask.any():
+                per_gap_nlos = sigma_nlos[nlos_mask] - sigma_los[nlos_mask]
+                nlos_sep = torch.relu(self.sigma_gap_target - per_gap_nlos).mean()
+                total_loss = total_loss + self.lambda_sigma_sep * nlos_sep
+            if los_mask.any():
+                per_gap_los = sigma_nlos[los_mask] - sigma_los[los_mask] - self.sigma_gap_target
+                los_sep = torch.relu(per_gap_los).mean()
+                total_loss = total_loss + self.lambda_sigma_sep * 0.2 * los_sep
 
         if return_components:
             return total_loss, {
@@ -630,7 +647,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                                     pseudorange_errors, nlos_labels, elevation=elevation_deg, return_components=True)
                 target_los = 1.0 - nlos_labels.squeeze()
                 loss_bce = F.binary_cross_entropy(p_los.squeeze(), target_los, reduction='mean')
-                loss = loss_nll * 0.1 + loss_bce * 1.0  # Fix 5: BCE 10x dominant over NLL
+                # Fix 6C: Dynamic BCE weight (1.5 -> 0.6) over pure NLL phase
+                blend_end = mog_pure_bce_epochs + mog_blend_epochs
+                progress = min(1.0, (epoch - blend_end + 1) / max(67, 1))
+                bce_weight = 1.5 * (1.0 - 0.6 * progress)
+                loss = loss_nll * 0.1 + loss_bce * bce_weight
         else:
             try:
                 loss, components = loss_fn(p_los, log_sigma_nlos, pseudorange_errors,
@@ -666,6 +687,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                     param.grad.add_(torch.randn_like(param.grad) * 1e-5)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+
+            # Fix 6B: tighter clip on sigma heads (0.5 vs global 1.0)
+            sigma_params = (list(model.log_sigma_los_head.parameters())
+                            + list(model.log_sigma_nlos_head.parameters()))
+            torch.nn.utils.clip_grad_norm_(sigma_params, 0.5)
 
             total_norm_after = sum(
                 p.grad.data.norm(2).item() ** 2
@@ -924,7 +950,7 @@ def create_optimizer_and_scheduler(model: nn.Module, config: Config):
     excluded_ids = set(id(p) for p in (p_los_params + mu_nlos_params + sigma_los_params + sigma_nlos_params))
     other_params = [p for p in model.parameters() if id(p) not in excluded_ids]
     optimizer = torch.optim.AdamW([
-        {'params': p_los_params, 'lr': config.LEARNING_RATE * 10},      # 5e-4, Fix 5: stronger classification
+        {'params': p_los_params, 'lr': config.LEARNING_RATE * config.P_LOS_LR_MULTIPLIER},  # Fix 6C: configurable (6x = 3e-4)
         {'params': mu_nlos_params, 'lr': config.LEARNING_RATE},         # 5e-5
         {'params': sigma_los_params, 'lr': config.LEARNING_RATE},       # 5e-5
         {'params': sigma_nlos_params, 'lr': config.LEARNING_RATE},      # 5e-5
@@ -984,6 +1010,20 @@ def main(resume_from: str = None, num_epochs: int = None, dataset_name: str = No
         return
 
     print(f"\nTotal epochs: {len(all_epochs)}")
+
+    # Fix 6D: Auto-compute pos_weight from dataset NLOS ratio
+    if config.AUTO_POS_WEIGHT:
+        total_nlos = sum(1 for ep in all_epochs for lb in ep.get('nlos_labels', []) if lb == 1)
+        total_obs = sum(len(ep.get('nlos_labels', [])) for ep in all_epochs)
+        if total_obs > 0:
+            nlos_ratio = total_nlos / total_obs
+            if nlos_ratio < 0.30:
+                config.POS_WEIGHT = min(2.0, 0.5 / max(nlos_ratio, 0.01))
+            else:
+                los_ratio = 1.0 - nlos_ratio
+                config.POS_WEIGHT = los_ratio / max(nlos_ratio, 0.01) if nlos_ratio > 0 else 1.0
+            print(f'  Auto POS_WEIGHT: {config.POS_WEIGHT:.3f} (NLOS ratio={nlos_ratio:.3f})')
+
 
     num_total = len(all_epochs)
     indices = np.random.permutation(num_total)
