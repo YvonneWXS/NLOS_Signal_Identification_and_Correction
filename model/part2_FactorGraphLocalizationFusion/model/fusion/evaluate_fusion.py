@@ -1,5 +1,5 @@
 ﻿"""
-fusion/evaluate_fusion.py — End-to-end evaluation for Module 2
+fusion/evaluate_fusion.py 鈥?End-to-end evaluation for Module 2
 ===============================================================
 Runs all positioning methods on all epochs, computes metrics,
 and generates comparison tables.
@@ -54,7 +54,7 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     """Evaluate all 5 methods on a single dataset.
     
     Returns:
-        results: dict mapping method_name → metrics dict
+        results: dict mapping method_name 鈫?metrics dict
     """
     print(f"\n{'='*60}")
     print(f"Evaluating: {dataset_name}")
@@ -70,8 +70,9 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     elevation_all = []
     for epoch_data in all_epochs_data:
         from fusion.utils import compute_satellite_positions
-        sv_pos = compute_satellite_positions(epoch_data['gt_ecef'], epoch_data)
+        sv_pos, sv_clk = compute_satellite_positions(epoch_data, dataset_name)
         sv_positions_all.append(sv_pos)
+        # Raw pseudorange (km) — receiver clock bias handled by LS state estimation
         pr_measured_all.append(np.array([obs['pr_mes_m'] / 1000.0 for obs in epoch_data['obs']]))
         elevation_all.append(np.array([obs.get('elevation_deg', 0.0) for obs in epoch_data['obs']]))
     
@@ -172,7 +173,7 @@ def generate_report_table(all_results, output_path):
     lines = []
     lines.append("# Module 2 Positioning Results")
     lines.append("")
-    lines.append("## CEP50 (meters) — Median 2D Error")
+    lines.append("## CEP50 (meters) 鈥?Median 2D Error")
     lines.append("")
     header = "| Method | " + " | ".join(datasets) + " |"
     lines.append(header)
@@ -185,7 +186,7 @@ def generate_report_table(all_results, output_path):
         lines.append(f"| {method} | " + " | ".join(vals) + " |")
     
     lines.append("")
-    lines.append("## CEP95 (meters) — 95th Percentile 2D Error")
+    lines.append("## CEP95 (meters) 鈥?95th Percentile 2D Error")
     lines.append("")
     lines.append(header)
     lines.append("|" + "|".join(["------"] * (len(datasets) + 1)) + "|")

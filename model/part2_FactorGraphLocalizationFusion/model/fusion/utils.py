@@ -1,277 +1,205 @@
-﻿"""
-fusion/utils.py — Coordinate transforms, data loading, Module 1 inference interface
-==================================================================================
-Reuses ECEF/LLA conversion logic from Module 1 Radio_Depth_Generate.py.
-Provides a clean interface for loading raw data and running Module 1 inference.
-"""
-import sys, os
-import numpy as np
-import pandas as pd
+﻿# fusion/utils.py v4 — Coordinate transforms, data loading (processed pickle),
+# Module 1 inference, and SP3-based satellite position computation.
+# Fix: correct feature extraction matching training (11 features, GNSS one-hot)
 
-# Add Module 1 model path for imports
+import sys, os, pickle
+import numpy as np
+
 _MODULE1_PATH = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\model"
 if _MODULE1_PATH not in sys.path:
     sys.path.insert(0, _MODULE1_PATH)
 
-# ============================================================
-# ECEF ↔ LLA conversion (from Radio_Depth_Generate.py logic)
-# ============================================================
-
 # WGS84 constants
-_WGS84_A = 6378137.0          # semi-major axis (m)
-_WGS84_F = 1.0 / 298.257223563  # flattening
-_WGS84_E2 = 2 * _WGS84_F - _WGS84_F ** 2  # first eccentricity squared
+_WGS84_A = 6378137.0
+_WGS84_F = 1.0 / 298.257223563
+_WGS84_E2 = 2 * _WGS84_F - _WGS84_F ** 2
 
 
 def lla_to_ecef(lat_deg, lon_deg, height_m):
-    """Convert LLA (deg, deg, m) → ECEF (km)."""
-    lat = np.deg2rad(lat_deg)
-    lon = np.deg2rad(lon_deg)
-    sin_lat = np.sin(lat)
-    cos_lat = np.cos(lat)
+    lat = np.deg2rad(lat_deg); lon = np.deg2rad(lon_deg)
+    sin_lat = np.sin(lat); cos_lat = np.cos(lat)
     N = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_lat ** 2)
     x = (N + height_m) * cos_lat * np.cos(lon)
     y = (N + height_m) * cos_lat * np.sin(lon)
     z = (N * (1.0 - _WGS84_E2) + height_m) * sin_lat
-    return np.array([x, y, z]) / 1000.0  # km
+    return np.array([x, y, z]) / 1000.0
 
 
 def ecef_to_lla(x_km, y_km, z_km):
-    """Convert ECEF (km) → LLA (deg, deg, m). Iterative method."""
     x, y, z = x_km * 1000.0, y_km * 1000.0, z_km * 1000.0
-    lon = np.arctan2(y, x)
-    p = np.sqrt(x**2 + y**2)
+    lon = np.arctan2(y, x); p = np.sqrt(x**2 + y**2)
     lat = np.arctan2(z, p * (1.0 - _WGS84_E2))
     for _ in range(5):
-        sin_lat = np.sin(lat)
-        N = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_lat**2)
+        sin_lat = np.sin(lat); N = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_lat**2)
         h = p / np.cos(lat) - N
         lat = np.arctan2(z, p * (1.0 - _WGS84_E2 * N / (N + h)))
-    sin_lat = np.sin(lat)
-    N = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_lat**2)
+    sin_lat = np.sin(lat); N = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_lat**2)
     h = p / np.cos(lat) - N
     return np.rad2deg(lat), np.rad2deg(lon), h
 
 
-# ============================================================
-# GNSS constellation mapping
-# ============================================================
-
-_GNSS_ID_MAP = {0: 'GPS', 1: 'GPS', 2: 'Galileo', 3: 'Glonass', 4: 'BeiDou',
-                5: 'QZSS', 6: 'Galileo', 'GPS': 0, 'Glonass': 3, 'Galileo': 2, 'BeiDou': 4}
+_GNSS_ID_MAP = {0: 'GPS', 1: 'GPS', 2: 'Galileo', 3: 'Glonass', 4: 'BeiDou', 5: 'QZSS', 6: 'Galileo'}
+_GNSS_TO_SP3 = {'GPS': 'G', 'Glonass': 'R', 'Galileo': 'E', 'BeiDou': 'C'}
+_GNSS_TO_INDEX = {'GPS': 7, 'Glonass': 8, 'Galileo': 9, 'BeiDou': 10}
+_SP3_CACHE = {}
 
 
-def gnss_to_sp3_prefix(gnss_name):
-    """Map GNSS name → SP3 satellite prefix."""
-    mapping = {'GPS': 'G', 'Glonass': 'R', 'Galileo': 'E', 'BeiDou': 'C'}
-    return mapping.get(gnss_name, 'G')
+def _to_sp3_svid(gnss_name, svid):
+    prefix = _GNSS_TO_SP3.get(gnss_name, 'G')
+    return f'{prefix}{svid:02d}'
 
 
 # ============================================================
 # Data loading
 # ============================================================
 
-def load_epoch_data(dataset_name, data_root=None):
-    """Load all epochs from a dataset with ground truth and raw observations.
-    
-    Returns:
-        list of dicts per epoch with keys:
-        - gps_week, gps_seconds
-        - gt_ecef: (3,) km ground truth position
-        - obs: list of dicts per satellite:
-            {svid, gnss, pr_mes_m, cno, pr_stdev_m, nlos_label,
-             sv_ecef_km, elevation_deg, azimuth_deg}
-    """
-    if data_root is None:
-        data_root = r"D:\3_document\4_research\NLOS Signal Identification and Correction\data\dataset"
-    ds_dir = os.path.join(data_root, dataset_name)
-    
-    # Load ground truth positions
-    nav_path = os.path.join(ds_dir, 'NAV-POSLLH.csv')
-    if not os.path.exists(nav_path):
-        raise FileNotFoundError(f"NAV-POSLLH.csv not found in {ds_dir}")
-    
-    try:
-        nav_df = pd.read_csv(nav_path, sep=';')
-    except Exception:
-        nav_df = pd.read_csv(nav_path, sep=',')
-    
-    # Find column names
-    lat_col = [c for c in nav_df.columns if 'Latitude' in c and 'GT' in c and 'Cov' not in c][0]
-    lon_col = [c for c in nav_df.columns if 'Longitude' in c and 'GT' in c and 'Cov' not in c][0]
-    h_col = [c for c in nav_df.columns if 'Height' in c and 'GT' in c and 'Cov' not in c and 'MSL' not in c][0]
-    week_col = [c for c in nav_df.columns if 'GPSWeek' in c or 'GPS Week' in c][0]
-    sec_col = [c for c in nav_df.columns if 'GPSSeconds' in c or 'GPS Second' in c][0]
-    
-    gt_positions = {}
-    for _, row in nav_df.iterrows():
-        key = (int(row[week_col]), float(row[sec_col]))
-        gt_positions[key] = lla_to_ecef(row[lat_col], row[lon_col], row[h_col])
-    
-    # Load raw observations
-    rawx_path = os.path.join(ds_dir, 'RXM-RAWX.csv')
-    rawx_df = pd.read_csv(rawx_path, sep=';')
-    
-    pr_col = [c for c in rawx_df.columns if 'prMes' in c][0]
-    gnss_col = [c for c in rawx_df.columns if 'gnssId' in c or 'GNSS' in c][0]
-    svid_col = [c for c in rawx_df.columns if 'svId' in c][0]
-    cno_col = [c for c in rawx_df.columns if 'cno' in c.lower() and 'dbHz' in c][0] if any('cno' in c.lower() for c in rawx_df.columns) else None
-    prstd_col = [c for c in rawx_df.columns if 'prStdev' in c][0]
-    nlos_col = [c for c in rawx_df.columns if 'NLOS' in c][0]
-    week_col_r = [c for c in rawx_df.columns if 'GPSWeek' in c or 'week' in c.lower()][0]
-    sec_col_r = [c for c in rawx_df.columns if 'GPSSeconds' in c or 'rcvTow' in c][0]
-    
-    # Group by epoch
-    epochs = {}
-    for _, row in rawx_df.iterrows():
-        key = (int(row[week_col_r]), float(row[sec_col_r]))
-        if key not in epochs:
-            epochs[key] = []
-        
-        gnss_val = row[gnss_col]
-        gnss_name = _GNSS_ID_MAP.get(gnss_val, 'GPS') if isinstance(gnss_val, (int, float)) else gnss_val
-        
-        obs = {
-            'svid': int(row[svid_col]),
-            'gnss': gnss_name,
-            'pr_mes_m': float(row[pr_col]),
-            'cno': float(row[cno_col]) if cno_col else 0.0,
-            'pr_stdev_m': float(row[prstd_col]),
-            'nlos_label': int(row[nlos_col]) if row[nlos_col] not in ['#', ''] else 0,
-        }
-        epochs[key].append(obs)
-    
-    # Build final epoch list
+def load_epoch_data(dataset_name):
+    processed_dir = r"D:\3_document\4_research\NLOS Signal Identification and Correction\data\processedData"
+    pkl_path = os.path.join(processed_dir, f'{dataset_name}_processed.pkl')
+    if not os.path.exists(pkl_path):
+        raise FileNotFoundError(f"Processed data not found: {pkl_path}")
+    with open(pkl_path, 'rb') as f:
+        ep_list = pickle.load(f)
     result = []
-    for (week, sec), obs_list in sorted(epochs.items()):
-        if (week, sec) not in gt_positions:
-            continue
-        gt_ecef = gt_positions[(week, sec)]
+    for ep in ep_list:
+        gt_ecef = lla_to_ecef(ep.gt_lat, ep.gt_lon, ep.gt_height)
+        obs_list = []
+        for obs in ep.observations:
+            obs_list.append({
+                'svid': obs.sv_id if hasattr(obs, 'sv_id') else 0,
+                'gnss': str(obs.gnss_id) if hasattr(obs, 'gnss_id') else 'GPS',
+                'pr_mes_m': obs.pr_mes,
+                'cno': obs.cno if hasattr(obs, 'cno') else 0.0,
+                'pr_stdev_m': obs.pr_stdev if hasattr(obs, 'pr_stdev') else 0.0,
+                'nlos_label': obs.nlos_label,
+                'elevation_deg': obs.elevation,
+                'azimuth_deg': obs.azimuth,
+            })
         result.append({
-            'gps_week': week,
-            'gps_seconds': sec,
+            'gps_week': ep.gps_week,
+            'gps_seconds': ep.gps_seconds,
             'gt_ecef': gt_ecef,
             'obs': obs_list,
         })
-    
     return result
 
 
 # ============================================================
-# Module 1 inference interface
+# Satellite position from SP3
+# ============================================================
+
+def _load_sp3(dataset_name):
+    if dataset_name in _SP3_CACHE:
+        return _SP3_CACHE[dataset_name]
+    from sp3_reader import SP3Reader
+    data_root = r"D:\3_document\4_research\NLOS Signal Identification and Correction\data\dataset"
+    ds_dir = os.path.join(data_root, dataset_name)
+    sp3_files = [f for f in os.listdir(ds_dir) if f.endswith('.sp3') and not f.endswith('.Z')]
+    if not sp3_files:
+        print(f"  [WARN] No .sp3 file in {ds_dir}")
+        _SP3_CACHE[dataset_name] = None
+        return None
+    sp3_path = os.path.join(ds_dir, sp3_files[0])
+    reader = SP3Reader(sp3_path)
+    _SP3_CACHE[dataset_name] = reader
+    print(f"  SP3: {sp3_files[0]} ({reader.get_statistics()['total_satellites']} sats)")
+    return reader
+
+
+def compute_satellite_positions(epoch_data, dataset_name=None):
+    gps_week = epoch_data['gps_week']
+    gps_sec = epoch_data['gps_seconds']
+    obs_list = epoch_data['obs']
+    N = len(obs_list)
+    sv_positions = np.zeros((N, 3))
+    sv_clock_m = np.zeros(N)
+    reader = _load_sp3(dataset_name) if dataset_name else None
+    for i, obs in enumerate(obs_list):
+        sp3_svid = _to_sp3_svid(obs['gnss'], obs['svid'])
+        if reader is not None and reader.has_satellite(sp3_svid):
+            pos = reader.get_satellite_position(gps_week, gps_sec, sp3_svid)
+            clk = reader.get_satellite_clock(gps_week, gps_sec, sp3_svid)
+            if pos is not None:
+                sv_positions[i] = np.array(pos) / 1000.0
+                if clk is not None:
+                    sv_clock_m[i] = clk
+                continue
+        # Fallback: geometric approximation
+        el = np.deg2rad(obs['elevation_deg']); az = np.deg2rad(obs['azimuth_deg'])
+        e_unit = np.array([np.cos(el) * np.sin(az), np.cos(el) * np.cos(az), np.sin(el)])
+        lat, lon = ecef_to_lla(epoch_data['gt_ecef'][0],
+                               epoch_data['gt_ecef'][1],
+                               epoch_data['gt_ecef'][2])[:2]
+        lat_r, lon_r = np.deg2rad(lat), np.deg2rad(lon)
+        R = np.array([
+            [-np.sin(lon_r), -np.sin(lat_r) * np.cos(lon_r), np.cos(lat_r) * np.cos(lon_r)],
+            [np.cos(lon_r), -np.sin(lat_r) * np.sin(lon_r), np.cos(lat_r) * np.sin(lon_r)],
+            [0, np.cos(lat_r), np.sin(lat_r)],
+        ])
+        sv_positions[i] = epoch_data['gt_ecef'] + R @ e_unit * (obs['pr_mes_m'] / 1000.0)
+    return sv_positions, sv_clock_m
+
+
+# ============================================================
+# Module 1 inference — FIXED feature extraction
 # ============================================================
 
 def load_mog_model(exp_name):
-    """Load the best MoG Fix6 model for a given experiment.
-    
-    Args:
-        exp_name: e.g., 'exp_034' for berlin1
-    
-    Returns:
-        (model, config, device) tuple ready for inference
-    """
     import torch
     from config import get_config
-    
-    # Find the model file
-    result_dir = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\result"
-    
-    # Import GAT_V2025 model
     from GAT_V2025 import NLOSGAT
-    
     config = get_config()
     device = config.get_device()
-    
     model = NLOSGAT(
-        in_features=config.IN_FEATURES,
-        hidden_features=config.HIDDEN_FEATURES,
-        num_heads=config.NUM_HEADS,
-        num_layers=config.NUM_LAYERS,
-        dropout=config.DROPOUT,
+        in_features=config.IN_FEATURES, hidden_features=config.HIDDEN_FEATURES,
+        num_heads=config.NUM_HEADS, num_layers=config.NUM_LAYERS, dropout=config.DROPOUT,
     ).to(device)
-    
+    result_dir = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\result"
     best_path = os.path.join(result_dir, exp_name, 'best_model.pth')
     if not os.path.exists(best_path):
-        # Try final_model.pth
         best_path = os.path.join(result_dir, exp_name, 'final_model.pth')
-    
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
-    
     return model, config, device
 
 
 def run_mog_inference(model, config, device, epoch_data):
-    """Run Module 1 MoG inference on a single epoch.
-    
-    Args:
-        epoch_data: dict with 'obs' list
-    
-    Returns:
-        dict with per-satellite MoG outputs:
-        - p_los: (N,) array
-        - mu_nlos: (N,) array (km)
-        - sigma_los: (N,) array (km)
-        - sigma_nlos: (N,) array (km)
-        - elevation_deg: (N,) array
-        - azimuth_deg: (N,) array
-        - gnss: list of strings
-        - svid: list of ints
-        - pr_mes_km: (N,) array pseudorange measurements in km
-        - nlos_label: (N,) array ground truth
-    """
     import torch
-    from GAT_V2025 import _extract_elevation
-    
     obs_list = epoch_data['obs']
     N = len(obs_list)
     if N == 0:
         return None
-    
-    # Build node features (matching Module 1 format)
-    # Features: [elevation/90, azimuth/360, sin(el), cos(el), sin(az), cos(az),
-    #             cno/50, pr_stdev_norm, ..., constellation_onehot_4]
-    features = np.zeros((N, config.IN_FEATURES), dtype=np.float32)
+    # Match NodeFeature_Generate.py extract_node_features exactly
+    features = np.zeros((N, 11), dtype=np.float32)
     for i, obs in enumerate(obs_list):
-        el = obs.get('elevation_deg', 0.0)
-        az = obs.get('azimuth_deg', 0.0)
-        cno = obs.get('cno', 0.0)
-        pr_std = obs.get('pr_stdev_m', 0.0)
-        
-        features[i, 0] = el / 90.0
-        features[i, 1] = az / 360.0
-        features[i, 2] = np.sin(np.deg2rad(el))
-        features[i, 3] = np.cos(np.deg2rad(el))
-        features[i, 4] = np.sin(np.deg2rad(az))
-        features[i, 5] = np.cos(np.deg2rad(az))
-        features[i, 6] = min(cno / 50.0, 1.0)
-        features[i, 7] = min(pr_std / 100.0, 1.0)
-        # Remaining features zero (pseudorange_error, constellation one-hot)
-    
+        features[i, 0] = obs['elevation_deg'] / 90.0        # elevation normalized
+        features[i, 1] = obs['azimuth_deg'] / 360.0         # azimuth normalized
+        features[i, 2] = obs.get('cno', 0.0) / 60.0         # CNO normalized (÷60 dBHz)
+        features[i, 3] = obs.get('pr_stdev_m', 0.0) / 5.0   # prStdev normalized (÷5 m)
+        features[i, 4] = obs['pr_mes_m'] / 3e7              # pseudorange scaled
+        features[i, 5] = 0.0                                # pseudorange_error — unknown at inference, set neutral
+        features[i, 6] = np.cos(np.radians(obs['elevation_deg']))  # cos(elevation)
+        # GNSS one-hot (features 7-10)
+        gnss_col = _GNSS_TO_INDEX.get(obs.get('gnss', 'GPS'), -1)
+        if 7 <= gnss_col <= 10:
+            features[i, gnss_col] = 1.0
     node_features = torch.tensor(features, device=device)
-    
-    # Build edges (fully connected for now, matching Module 1 default)
-    edge_list = []
-    for i in range(N):
-        for j in range(N):
-            if i != j:
-                edge_list.append([i, j])
+    # Edge index: fully connected graph (same as training)
+    edge_list = [[i, j] for i in range(N) for j in range(N) if i != j]
     if edge_list:
         edge_index = torch.tensor(edge_list, device=device).t().contiguous()
     else:
         edge_index = torch.tensor([[0], [0]], device=device)
-    
     with torch.no_grad():
         p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(node_features, edge_index)
-    
     return {
         'p_los': p_los.squeeze().cpu().numpy(),
         'mu_nlos': mu_nlos.squeeze().cpu().numpy(),
         'sigma_los': np.exp(log_sigma_los.squeeze().cpu().numpy()),
         'sigma_nlos': np.exp(log_sigma_nlos.squeeze().cpu().numpy()),
-        'elevation_deg': np.array([obs.get('elevation_deg', 0.0) for obs in obs_list]),
-        'azimuth_deg': np.array([obs.get('azimuth_deg', 0.0) for obs in obs_list]),
+        'elevation_deg': np.array([obs['elevation_deg'] for obs in obs_list]),
+        'azimuth_deg': np.array([obs['azimuth_deg'] for obs in obs_list]),
         'gnss': [obs['gnss'] for obs in obs_list],
         'svid': [obs['svid'] for obs in obs_list],
         'pr_mes_km': np.array([obs['pr_mes_m'] / 1000.0 for obs in obs_list]),
@@ -279,47 +207,4 @@ def run_mog_inference(model, config, device, epoch_data):
     }
 
 
-def compute_satellite_positions(dataset_name, epoch_data):
-    """Compute satellite ECEF positions from SP3 ephemeris + pseudorange.
-    Simplified: use broadcast ephemeris if SP3 unavailable.
-    
-    For now, returns approximate satellite positions based on 
-    elevation/azimuth and pseudorange.
-    
-    Returns:
-        sv_ecef: (N, 3) array of satellite ECEF positions in km
-    """
-    # Simplified approach: estimate satellite position from receiver position,
-    # elevation, azimuth, and pseudorange
-    gt_ecef = epoch_data['gt_ecef']  # (3,) km
-    sv_positions = np.zeros((len(epoch_data['obs']), 3))
-    
-    for i, obs in enumerate(epoch_data['obs']):
-        el = np.deg2rad(obs.get('elevation_deg', 0.0))
-        az = np.deg2rad(obs.get('azimuth_deg', 0.0))
-        pr_m = obs.get('pr_mes_m', 2e7)  # meters
-        
-        # Unit vector from receiver to satellite (ENU frame)
-        # E: East, N: North, U: Up
-        e_unit = np.array([np.cos(el) * np.sin(az),
-                           np.cos(el) * np.cos(az),
-                           np.sin(el)])
-        
-        # Convert ENU unit vector to ECEF
-        lat, lon = ecef_to_lla(gt_ecef[0], gt_ecef[1], gt_ecef[2])[:2]
-        lat_r, lon_r = np.deg2rad(lat), np.deg2rad(lon)
-        
-        # ENU to ECEF rotation matrix
-        R = np.array([
-            [-np.sin(lon_r), -np.sin(lat_r) * np.cos(lon_r), np.cos(lat_r) * np.cos(lon_r)],
-            [np.cos(lon_r), -np.sin(lat_r) * np.sin(lon_r), np.cos(lat_r) * np.sin(lon_r)],
-            [0, np.cos(lat_r), np.sin(lat_r)],
-        ])
-        
-        ecef_unit = R @ e_unit
-        sv_positions[i] = gt_ecef + ecef_unit * (pr_m / 1000.0)  # km
-    
-    return sv_positions
-
-
-print("fusion/utils.py loaded successfully")
+print("fusion/utils.py loaded (v4 — fixed 11-feature Module 1 inference)")

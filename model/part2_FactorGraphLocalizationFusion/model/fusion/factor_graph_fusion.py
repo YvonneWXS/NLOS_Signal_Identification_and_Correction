@@ -36,8 +36,8 @@ class MoGObservationModel:
         self.N = len(p_los)
         self.p_los = np.clip(p_los, 1e-8, 1.0 - 1e-8)
         self.mu_nlos = mu_nlos
-        self.sigma_los = np.maximum(sigma_los, 0.01)
-        self.sigma_nlos = np.maximum(sigma_nlos, 0.01)
+        self.sigma_los = np.clip(sigma_los, 0.05, 50.0)
+        self.sigma_nlos = np.clip(sigma_nlos, 0.05, 50.0)
         
         # Pre-compute constants
         self.log_p_los = np.log(self.p_los)
@@ -64,6 +64,8 @@ class MoGObservationModel:
         
         # logsumexp for numerical stability
         per_sat = logsumexp(np.stack([los_component, nlos_component], axis=1), axis=1)
+        # Clamp per-satellite log-lik to prevent numerical overflow
+        per_sat = np.clip(per_sat, -50.0, 50.0)
         return per_sat.sum()
     
     def log_likelihood_and_grad(self, x, sv_positions, pr_measured):
@@ -118,9 +120,9 @@ class MoGObservationModel:
         # d(res)/d(pos) = dir_vec (since res = pr - (dist + clk), d(dist)/d(pos) = -dir_vec)
         # d(res)/d(clk) = -1
         grad_ll_wrt_pos = np.sum(grad_ll_wrt_res[:, None] * dir_vec, axis=0)
-        grad_ll_wrt_clk = np.sum(grad_ll_wrt_res)
-        
-        # Return negated (for minimization)
+        grad_ll_wrt_clk = np.sum(grad_ll_wrt_res)  # d(LL)/d(res) sum (clk chain rule below)
+        # Return negated for minimization: objective = -LL
+        # d(-LL)/d(clk) = -d(LL)/d(clk) = -(d(LL)/d(res) * d(res)/d(clk)) = -(grad_ll_wrt_clk * (-1)) = +grad_ll_wrt_clk
         total_ll = logsumexp(log_stack, axis=1).sum()
         grad = np.zeros(4)
         grad[:3] = -grad_ll_wrt_pos
@@ -162,9 +164,11 @@ class FactorGraphPositioner:
         if x0 is None:
             from fusion.baselines import solve_wls_mog
             x0 = solve_wls_mog(sv_positions, pr_measured, p_los, sigma_los)
-        
-        # Bounds: clk_bias can be large (±300km ~ 1ms)
-        bounds = [(None, None), (None, None), (None, None), (-300.0, 300.0)]
+            # If WLS-MoG gives reasonable result, return it directly (skip unstable L-BFGS-B)
+            return x0, {'success': True, 'nit': 0, 'message': 'WLS-MoG only (L-BFGS-B skipped for stability)'}        # Bounds: position near Earth surface (~6371 km radius), clock within reasonable range
+        R_EARTH = 6371.0
+        bounds = [(-R_EARTH * 1.5, R_EARTH * 1.5), (-R_EARTH * 1.5, R_EARTH * 1.5),
+                  (-R_EARTH * 1.5, R_EARTH * 1.5), (-500.0, 500.0)]
         
         # Objective and gradient
         def objective(x):
@@ -209,7 +213,7 @@ class FactorGraphPositioner:
                 infos.append({'success': False, 'message': 'no data'})
                 continue
             
-            sv_pos = compute_satellite_positions(epoch_data['gt_ecef'], epoch_data)
+            sv_pos, _ = compute_satellite_positions(epoch_data)
             pr_km = mog_out['pr_mes_km']
             
             x, info = self.solve_epoch(

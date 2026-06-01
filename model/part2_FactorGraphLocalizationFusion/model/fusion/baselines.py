@@ -1,5 +1,5 @@
 ﻿"""
-fusion/baselines.py — 4 baseline positioning methods
+fusion/baselines.py 鈥?4 baseline positioning methods
 =====================================================
 1. Standard LS: uniform weights
 2. WLS-elevation: weight = sin(elevation)^2
@@ -43,9 +43,9 @@ def _wls_iteration(sv_positions, pr_measured, weights, x0, max_iter=5):
         # d(dist)/d(pos) = -(sv_pos - pos)/dist  (unit vector pointing from receiver to satellite)
         los_vectors = (sv_positions - x[:3]) / np.maximum(dist[:, None], 1e-6)
         H = np.zeros((len(pr_measured), 4))
-        H[:, :3] = -los_vectors  # d(residual)/d(pos) = -d(predicted_pr)/d(pos)
-        H[:, 3] = 1.0  # d(residual)/d(clk) = -1 (since residual = pr_meas - (dist + clk), d(res)/d(clk) = -1)
-        H[:, 3] = -1.0  # d(residual)/d(clk) = -1
+        H[:, :3] = -los_vectors  # d(pred_pr)/d(pos) = d(dist+clk)/d(pos) = -(SV-RX)/dist = -los
+        
+        H[:, 3] = 1.0  # d(res - (dist+clk))/d(clk): -los*dpos + 1*dclk = res
         
         W = np.diag(weights)
         
