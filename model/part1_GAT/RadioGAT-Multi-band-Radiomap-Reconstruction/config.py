@@ -79,11 +79,12 @@ class Config:
     MU_NLOS_MIN = 0.0
     MU_NLOS_MAX = 500.0
     SIGMA_NLOS_MIN = 0.05  # lowered to match new clamp
-    SIGMA_NLOS_MAX = 200.0
+    SIGMA_NLOS_MAX = 12.0  # Fix 6B: match exp(clamp(log_sigma, max=2.5))
     SIGMA_LOS_CLAMP_LOG_MIN = -3.0
     SIGMA_LOS_CLAMP_LOG_MAX = 2.0
     SIGMA_NLOS_CLAMP_LOG_MIN = -3.0
     SIGMA_NLOS_CLAMP_LOG_MAX = 2.5
+    SIGMA_LOS_MAX = 7.5  # Fix 6B: match exp(clamp(log_sigma_los, max=2.0))
     SIGMA_HEAD_GRAD_CLIP = 0.5
     LAMBDA_MU_REG = 0.30  # Fix 3: strong anchor (0.10?0.30)
     LAMBDA_MU_WARMUP_REG = 0.05  # mu supervision weight during pure BCE warmup

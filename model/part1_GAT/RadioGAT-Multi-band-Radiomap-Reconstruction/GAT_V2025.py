@@ -624,7 +624,19 @@ def train_epoch(model: nn.Module, dataloader: DataLoader,
                 mu_reg = 0.05 * (mu_nlos - 0.15).pow(2).mean()
                 sigma_warmup_reg = 0.01 * ((torch.exp(log_sigma_los) - 0.3).pow(2).mean()
                                           + (torch.exp(log_sigma_nlos) - 1.5).pow(2).mean())
-                loss = loss + mu_reg + sigma_warmup_reg
+                # Fix 6A: per-sample sigma sep in pure BCE phase
+                sigma_los_val = torch.exp(log_sigma_los).squeeze()
+                sigma_nlos_val = torch.exp(log_sigma_nlos).squeeze()
+                nl = nlos_labels.squeeze()
+                lm_bce = (nl == 0); nm_bce = (nl == 1)
+                sigma_sep_bce = torch.tensor(0.0, device=node_features.device)
+                if nm_bce.any():
+                    per_gap_n = sigma_nlos_val[nm_bce] - sigma_los_val[nm_bce]
+                    sigma_sep_bce = sigma_sep_bce + torch.relu(0.5 - per_gap_n).mean()
+                if lm_bce.any():
+                    per_gap_l = sigma_nlos_val[lm_bce] - sigma_los_val[lm_bce] - 0.5
+                    sigma_sep_bce = sigma_sep_bce + 0.2 * torch.relu(per_gap_l).mean()
+                loss = loss + mu_reg + sigma_warmup_reg + 5.0 * sigma_sep_bce
                 components['mu_reg'] = mu_reg.item()
             elif is_blend:
                 bce_loss_fn = bce_only_loss if bce_only_loss is not None else nlos_loss_bce
