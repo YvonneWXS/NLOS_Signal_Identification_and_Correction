@@ -16,7 +16,8 @@
     "WLS-elevation",
     "WLS-MoG",
     "Hard-threshold",
-    "FactorGraph-MoG"
+    "FactorGraph-MoG",
+    "FactorGraph-MoG+2A"
   ],
-  "total_time_min": 2.780870012442271
+  "total_time_min": 9.04609621365865
 }
