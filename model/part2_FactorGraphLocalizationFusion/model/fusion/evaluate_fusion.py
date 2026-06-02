@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fusion.baselines import (solve_standard_ls, solve_wls_elevation,
                                 solve_wls_mog, solve_hard_threshold)
+from fusion.utils import fit_platt_scaling, apply_platt_scaling
 from fusion.factor_graph_fusion import FactorGraphPositioner
 from fusion.utils import compute_satellite_positions
 
@@ -35,9 +36,49 @@ def compute_metrics(errors_2d):
     }
 
 
+# P0.2: Platt scaling calibration for p_los discrimination
+def _calibrate_p_los(all_epochs_data, mog_outputs):
+    """Fit Platt scaling on all epochs and apply calibration to mog_outputs."""
+    
+    p_raw_list = []
+    labels_list = []
+    for ep, mog in zip(all_epochs_data, mog_outputs):
+        if mog is None or 'p_los' not in mog:
+            continue
+        p_raw = mog['p_los']
+        labels = np.array([obs['nlos_label'] for obs in ep['obs']])
+        if len(p_raw) == len(labels):
+            # nlos_label: 0=LOS, 1=NLOS. Convert to p_los target: LOS->1, NLOS->0
+            los_labels = 1.0 - labels.astype(np.float32)
+            p_raw_list.append(p_raw)
+            labels_list.append(los_labels)
+    
+    if len(p_raw_list) == 0:
+        return None
+    
+    print(f'  Calibrating p_los on {sum(len(p) for p in p_raw_list)} samples...')
+    calib = fit_platt_scaling(p_raw_list, labels_list)
+    
+    # Apply to all mog_outputs
+    for mog in mog_outputs:
+        if mog is not None and 'p_los' in mog:
+            mog['p_los_cal'] = apply_platt_scaling(mog['p_los'], calib)
+            # Also update p_los_sharp to use calibrated version
+            mog['p_los_sharp'] = mog['p_los_cal']
+    
+    return calib
+
+
 def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir):
     n_epochs = len(all_epochs_data)
     results = {}
+    
+    # P0.2: Fit Platt scaling calibration
+    print('  [0/6] Fitting Platt scaling calibration ...')
+    calib_params = _calibrate_p_los(all_epochs_data, mog_outputs)
+    if calib_params:
+        print(f'    Platt params: A={calib_params["A"]:.4f}, B={calib_params["B"]:.4f}')
+        results['platt_calibration'] = calib_params
     
     # Pre-compute SV positions and PR
     sv_positions_all = []

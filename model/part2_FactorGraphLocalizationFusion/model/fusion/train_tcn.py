@@ -122,9 +122,11 @@ class SimpleTCN(nn.Module):
         B, T, D = x.shape
         h = self.input_proj(x)  # (B, T, hidden)
         h = h.permute(0, 2, 1)  # (B, hidden, T) for Conv1d
-        h = h + torch.relu(self.conv1(h))  # residual
-        h = h + torch.relu(self.conv2(h))
-        h = h + torch.relu(self.conv3(h))
+        h = self.ln1(h.permute(0, 2, 1)).permute(0, 2, 1)  # LayerNorm over hidden
+        h = h + torch.relu(self.conv1(h))  # residual block 1
+        h = self.ln2(h.permute(0, 2, 1)).permute(0, 2, 1)  # LayerNorm over hidden
+        h = h + torch.relu(self.conv2(h))  # residual block 2
+        h = h + torch.relu(self.conv3(h))  # residual block 3
         h = h.permute(0, 2, 1)  # (B, T, hidden)
         h = self.ln3(self.dropout(h))
         h_last = h[:, -1, :]    # last timestep

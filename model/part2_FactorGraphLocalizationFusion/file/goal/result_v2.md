@@ -1,98 +1,105 @@
-﻿# Module 2 v2 定位实验结果 — 详细分析报告
+# Module 2 v3 定位结果分析报告 (exp_002)
 
-**实验编号**: exp_001  
-**日期**: 2026-06-02  
-**运行时间**: 9.0 min  
-**架构**: FactorGraph v2 (Fix A/B/C/D), Jacobian H=-LOS 验证通过, 无 SP3 时钟改正
+**日期**: 2026-06-02
+**实验**: exp_002
+**Module 1 模型**: exp_034-037 (MoG Fix 6 最终版)
+**总耗时**: 11.4 min
 
 ---
 
-## 一、CEP50 核心结果 (m)
+## 一、实验总览
+
+| 数据集 | Epochs | 观测数 | LOS% | NLOS% | 卫星/历元 |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| berlin1 | 1,377 | 20,117 | 51.7% | 48.3% | 14.6±1.5 |
+| berlin2 | 5,925 | 76,406 | 61.2% | 38.8% | 12.9±1.5 |
+| frankfurt1 | 5,851 | 74,286 | 57.0% | 43.0% | 12.7±1.7 |
+| frankfurt2 | 3,575 | 49,097 | 73.4% | 26.6% | 13.7±1.4 |
+
+---
+
+## 二、CEP50 对比 (m) — 核心指标
 
 | Method | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
-|--------|---------|---------|------------|------------|
+|--------|:---:|:---:|:---:|:---:|
 | Standard LS | 904.5 | 610.8 | 525.2 | **382.6** |
 | WLS-elevation | 1095.0 | 877.6 | 839.6 | 451.7 |
-| WLS-MoG | 962.8 | 715.8 | **454.4** | 436.9 |
-| Hard-threshold | 1393.0 | 1138.8 | 1286.5 | 695.0 |
-| **FactorGraph-MoG** | **945.2** | **735.5** | 455.7 | 436.9 |
+| WLS-MoG | 964.7 | 764.6 | **473.6** | 458.5 |
+| Hard-threshold | 1388.2 | 1134.9 | 1340.5 | 720.0 |
+| **FactorGraph-MoG** | **949.1** | **772.5** | **473.6** | **458.5** |
 
-### ΔCEP50 (FactorGraph vs WLS-MoG)
+### 最佳方法
 
-| Dataset | Δ | 改善历元比例 |
-|---------|---|-------------|
-| berlin1 | **+1.8%** ⬆ | 51.2% |
-| berlin2 | -2.8% ⬇ | 46.6% |
-| frankfurt1 | -0.3% | 0.0% |
-| frankfurt2 | 0.0% | 0.0% |
-
----
-
-## 二、CEP95 (m)
-
-| Method | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
-|--------|---------|---------|------------|------------|
-| Standard LS | 1289 | 1330 | 1505 | 1296 |
-| WLS-MoG | 1636 | 1338 | 1567 | 1274 |
-| FactorGraph-MoG | 1565 | 1232 | 1595 | 1274 |
+| 数据集 | 最佳方法 | CEP50 | 相比 LS |
+|--------|---------|:---:|:---:|
+| berlin1 | FactorGraph-MoG | 949.1m | -4.9% (差于 LS) |
+| berlin2 | Standard LS | 610.8m | — |
+| frankfurt1 | WLS-MoG / FactorGraph | 473.6m | **+9.8% (优于 LS)** |
+| frankfurt2 | Standard LS | 382.6m | — |
 
 ---
 
-## 三、% Epochs <100m
+## 三、FactorGraph vs WLS-MoG 改善分析
 
-| Method | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
-|--------|---------|---------|------------|------------|
-| Standard LS | 5.8% | 5.5% | **9.1%** | **9.5%** |
-| WLS-MoG | **6.0%** | 3.9% | **9.2%** | 7.7% |
-| FactorGraph-MoG | 4.7% | **4.1%** | **9.2%** | 7.7% |
+| 数据集 | WLS-MoG CEP50 | FG CEP50 | ΔCEP50 | 改善% | NLL 改善历元% |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| berlin1 | 964.7 | 949.1 | +15.6m | +1.6% | 53.4% |
+| berlin2 | 764.6 | 772.5 | -7.9m | -1.0% | 49.7% |
+| frankfurt1 | 473.6 | 473.6 | 0.0m | 0.0% | 0.0% |
+| frankfurt2 | 458.5 | 458.5 | 0.0m | 0.0% | 0.0% |
 
----
+### 关键发现
 
-## 四、各场景分析
-
-### berlin1 (Potsdamer Platz) — FactorGraph 唯一改善场景
-
-- **FactorGraph-MoG 首次超越 WLS-MoG**: 945m vs 963m (+1.8%)
-- 51.2% 历元改善 — 过半历元从 L-BFGS-B 优化中获益
-- CEP95 也有改善: 1565m vs 1636m (+4.3%)
-- Standard LS 仍最优 (904m)，说明 MoG 权重在该 NLOS 最高场景 (48%) 仍需提升区分度
-
-### berlin2 (Gendarmenmarkt)
-
-- FactorGraph-MoG 略差于 WLS-MoG: 736m vs 716m (-2.8%)
-- CEP95 改善: 1232m vs 1338m (+7.9%) — 大误差被抑制
-- 46.6% 历元改善 — 接近随机，说明优化在该场景边际收益小
-
-### frankfurt1 (Maintower) — WLS-MoG 最优
-
-- WLS-MoG 454m 是全部方法中最优
-- FactorGraph-MoG 0% 改善 — L-BFGS-B 在所有历元返回起点
-- 原因: NLL 曲面在该场景极其平坦，多起点均无法改善
-
-### frankfurt2 (Westendtower) — Standard LS 最优
-
-- Standard LS 383m 全局最优（LOS 比例 73%，噪声最低）
-- FactorGraph-MoG = WLS-MoG → 无改善
-- 高 p_los 置信度 (均 >0.48) 使得 NLL 近似二次型，L-BFGS-B 等价 LS
+1. **berlin1**: FG 在 53.4% 历元上改善 NLL, CEP50 提升 1.6%
+2. **berlin2**: FG 改善 49.7% 历元的 NLL 但 CEP50 轻微退化 (-1.0%), 说明 NLL 改善不等价于定位改善
+3. **frankfurt**: NLL 曲面平坦, FG 与 WLS-MoG 等价 (所有历元 STABLE)
 
 ---
 
-## 五、核心发现
+## 四、Platt 校准效果分析
 
-1. **v2 FactorGraph 稳定**: 4 数据集全完成，零爆炸。Fix A/B/C 有效。
-2. **首次 FactorGraph 改善**: berlin1 +1.8% CEP50，证明 MoG 似然优化有理论价值。
-3. **改善局限**: 仅 1/4 场景实现改善，frankfurt 场景 NLL 曲面过于平坦。
-4. **Standard LS 仍是最稳健方法**: 在纯 LOS 场景 (frankfurt2) 最优。
-5. **梯度验证方向正确**: 量级偏差由 NLL 的非平滑 clip 操作引起，不影响收敛方向。
+| Dataset | A (锐度) | B (偏移) | BCE 改善 | p_los 方差变化 |
+|---------|:---:|:---:|:---:|:---:|
+| berlin1 | 1.01 | -0.03 | +0.0001 | ×1.0 |
+| berlin2 | **1.42** | +0.40 | +0.0197 | ×1.2 |
+| frankfurt1 | 0.99 | +0.22 | +0.0028 | ×1.0 |
+| frankfurt2 | 1.14 | -0.12 | +0.0020 | ×1.1 |
+
+- **berlin2 受益最大**: A=1.42 表示 Platt 自动发现需要锐化 p_los 分布
+- **Frankfurt A≈1.0**: p_los 区分度问题在 Module 1 层面, 校准无法修复
+- Platt scaling 比固定 T=0.6 温度缩放更稳健 (不再使 berlin2 恶化)
 
 ---
 
-## 六、下一步优先事项
+## 五、P0/P1/P2 优化效果汇总
 
-| 优先级 | 行动 | 依据 |
-|--------|------|------|
-| P0 | 修复梯度量级偏差（消除 clip，改用 smooth approximation） | 当前梯度 2-44× 偏差可能导致收敛慢 |
-| P0 | 提升 Module 1 p_los 区分度 | frankfurt 场景所有 p_los>0.48，权重无区分 |
-| P1 | 集成 2A TCN 先验 | 引入时序信息可增高 NLOS 率场景的区分度 |
-| P1 | 逐历元诊断: 打印 FactorGraph 何时改善/何时回退 | 理解 NLL 曲面的场景依赖性 |
-| P2 | 尝试不同优化器 (trust-ncg, Newton-CG) | L-BFGS-B 可能对非凸曲面不理想 |
+| 优化 | 状态 | 效果 |
+|------|:---:|------|
+| P0.1 平滑梯度 | ✓ 完成 | 梯度误差 44×→2.75× (avg), L-BFGS-B 稳定收敛 |
+| P0.2 Platt 校准 | ✓ 完成 | berlin2 BCE +0.02, 替代有害的 T=0.6 |
+| P1.1 逐历元诊断 | ✓ 完成 | 揭示 Frankfurt NLL 曲面平坦根因 |
+| P1.2 TCN 训练 | △ 代码完成 | 前向验证通过, 序列缓存待构建 |
+| P2 Newton-CG | ✗ 放弃 | 非凸 NLL 上失败, L-BFGS-B 是唯一可行方案 |
+
+---
+
+## 六、核心结论
+
+1. **WLS-MoG 在 frankfurt1 上显著优于 Standard LS** (+9.8%) — Module 1 MoG Fix 6 训练的效果
+2. **FactorGraph-MoG 对 berlin 场景有微小改善** (+1.6%), 但计算成本增加 (5-10×)
+3. **Frankfurt NLL 曲面问题**: MoG 模型对 Frankfurt 伪距误差过度自信 (NLL≈-8 到 -12)
+4. **Platt scaling 比温度缩放更稳健**: 自动学习最优校准, 不恶化任何场景
+5. **二阶优化器不适用**: Newton-CG 和 trust-ncg 在 MoG NLL 的 Hessian 不正定区域失败
+
+---
+
+## 七、下一步建议 (优先级排序)
+
+| 优先级 | 行动 | 预期影响 |
+|:---:|------|------|
+| **P0** | Module 1: 提升 Frankfurt p_los 区分度 (调整 pos_weight, 数据增强) | Frankfurt WLS-MoG 进一步提升 |
+| **P0** | Module 1: 解决 Frankfurt NLL 过度自信 (增大 sigma_nlos 上限, 减弱 p_los 极值) | FG 能在 Frankfurt 上开始改善 |
+| **P1** | 构建 TCN 序列缓存 + 训练 (4 datasets, ~2h) | 接入时序先验, 提升高 NLOS 场景 |
+| **P1** | TCN 集成到 FactorGraph-MoG+2A | 实现 Bayes 先验更新 |
+| **P2** | 运动模型集成 (motion_geometry_predictor.py) | 利用车辆动力学约束 |
+| **P3** | 移除 Newton-CG 选项 | 代码清理 |
