@@ -83,8 +83,8 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     print('  [3/6] WLS-MoG ...')
     err_2d, err_3d = [], []
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
-        if mog is None or len(mog['p_los']) == 0: continue
-        x = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], mog['p_los'], mog['sigma_los'])
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'])
         err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
         err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
     results['WLS-MoG'] = compute_metrics(err_2d)
@@ -97,11 +97,11 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     print('  [4/6] Hard-threshold ...')
     err_2d, err_3d, n_used = [], [], []
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
-        if mog is None or len(mog['p_los']) == 0: continue
-        x = solve_hard_threshold(sv_positions_all[i], pr_measured_all[i], mog['p_los'])
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_hard_threshold(sv_positions_all[i], pr_measured_all[i], mog.get('p_los_sharp', mog['p_los']))
         err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
         err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
-        n_used.append((mog['p_los'] >= 0.5).sum())
+        n_used.append((mog.get('p_los_sharp', mog['p_los']) >= 0.5).sum())
     results['Hard-threshold'] = compute_metrics(err_2d)
     results['Hard-threshold']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
     results['Hard-threshold']['mean_n_sats'] = float(np.mean(n_used))
@@ -114,14 +114,16 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     positioner = FactorGraphPositioner()
     err_2d, err_3d, n_improved, n_conv = [], [], 0, 0
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
-        if mog is None or len(mog['p_los']) == 0: continue
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
         # Get WLS-MoG baseline for comparison
-        x_wls = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], mog['p_los'], mog['sigma_los'])
+        x_wls = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'])
         err_wls = compute_2d_error(x_wls[:3], ep['gt_ecef'])
         
         x, info = positioner.solve_epoch(
             sv_positions_all[i], pr_measured_all[i],
-            mog['p_los'], mog['mu_nlos'], mog['sigma_los'], mog['sigma_nlos']
+            mog.get('p_los_sharp', mog['p_los']), mog['mu_nlos'],
+            mog['sigma_los'], mog['sigma_nlos'],
+            epoch_idx=i, dataset_name=dataset_name
         )
         err_fg = compute_2d_error(x[:3], ep['gt_ecef'])
         err_2d.append(err_fg)

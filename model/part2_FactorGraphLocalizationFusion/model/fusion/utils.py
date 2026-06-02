@@ -193,8 +193,23 @@ def run_mog_inference(model, config, device, epoch_data):
         edge_index = torch.tensor([[0], [0]], device=device)
     with torch.no_grad():
         p_los, mu_nlos, log_sigma_los, log_sigma_nlos = model(node_features, edge_index)
+    
+    # P0.2: Temperature scaling for p_los discrimination
+    T = 0.6  # <1 sharpens distribution, >1 smooths
+    p_raw = p_los.squeeze().cpu().numpy()
+    # Apply temperature: logit -> scale -> sigmoid
+    eps = 1e-8
+    logit = np.log(np.clip(p_raw, eps, 1 - eps) / np.clip(1 - p_raw, eps, 1 - eps))
+    p_sharp = 1.0 / (1.0 + np.exp(-logit / T))
+    
+    sigma_los_arr = np.exp(log_sigma_los.squeeze().cpu().numpy())
+    sigma_nlos_arr = np.exp(log_sigma_nlos.squeeze().cpu().numpy())
+    sigma_ratio = sigma_nlos_arr / np.maximum(sigma_los_arr, 0.01)  # >1 means NLOS more uncertain
+    
     return {
-        'p_los': p_los.squeeze().cpu().numpy(),
+                'p_los': p_raw,
+        'p_los_sharp': p_sharp,  # P0.2: temperature-scaled
+        'sigma_ratio': sigma_ratio,  # P0.2: sigma_nlos/sigma_los.cpu().numpy(),
         'mu_nlos': mu_nlos.squeeze().cpu().numpy(),
         'sigma_los': np.exp(log_sigma_los.squeeze().cpu().numpy()),
         'sigma_nlos': np.exp(log_sigma_nlos.squeeze().cpu().numpy()),
