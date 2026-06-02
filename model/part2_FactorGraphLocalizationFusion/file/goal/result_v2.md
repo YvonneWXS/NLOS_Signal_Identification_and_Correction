@@ -144,3 +144,71 @@
 | **P1** | TCN 集成到 FactorGraph-MoG+2A | 实现 Bayes 先验更新 |
 | **P2** | 运动模型集成 (motion_geometry_predictor.py) | 利用车辆动力学约束 |
 | **P3** | 移除 Newton-CG 选项 | 代码清理 |
+
+---
+
+﻿# P0 Frankfurt p_los/NLL Fix + P1 TCN Full Training (2026-06-02)
+
+## P0: Module 1 Frankfurt Config Overrides
+
+### Modified Files
+- `config.py`: Added `DATASET_OVERRIDES` dict with Frankfurt-specific parameters
+- `GAT_V2025.py`: Dataset override logic + configurable sigma clamp (replaces hardcoded values)
+- `fusion/utils.py`: `load_mog_model()` restores sigma clamp from checkpoint
+
+### Frankfurt Override Parameters
+
+| Parameter | Original | Frankfurt | Purpose |
+|------|:---:|:---:|------|
+| LAMBDA_ENTROPY | 0.03 | **0.005** | Reduce entropy reg -> allow more extreme p_los |
+| SIGMA_NLOS_CLAMP_LOG_MAX | 2.5 | **3.5** | sigma_nlos ceiling 12.2->33.1 km |
+| LAMBDA_SIGMA_REG | 0.01 | **0.02** | Stronger sigma regularization |
+| SIGMA_GAP_TARGET | 0.5 | **1.0** | Larger sigma separation target |
+
+### Key Implementation
+- Sigma clamp changed from hardcoded `torch.clamp(..., max=2.5)` to `model.sigma_nlos_clamp_log_max` attribute
+- Checkpoint saves `sigma_clamp_attrs` dict for inference-time restoration
+- Overrides applied after AUTO_POS_WEIGHT, before model creation
+
+## P1: TCN 4-Dataset Cache + Training
+
+### TCN Caches Built
+
+| Dataset | Sequences | Cache Size |
+|--------|:---:|:---:|
+| berlin1 | 490 (existing) | 1.3 MB |
+| berlin2 | 790 | ~2 MB |
+| frankfurt1 | 790 | ~2 MB |
+| frankfurt2 | 790 | ~2 MB |
+
+### TCN Training Results
+
+| Dataset | Val Loss | Best Epoch | Time |
+|--------|:---:|:---:|:---:|
+| berlin1 | 0.542 | pre-trained | 2.5s |
+| berlin2 | 0.481 | 8 | 1.8s |
+| frankfurt1 | 0.475 | 8 | 1.4s |
+| frankfurt2 | **0.326** | 11 | 1.4s |
+
+- frankfurt2 TCN has lowest val_loss -> temporal features most valuable in high-NLOS scenarios
+
+### TCN Integration Test (berlin2, 300 epochs)
+
+| Method | CEP50 |
+|--------|:---:|
+| Standard LS | 559.6m |
+| FactorGraph-MoG | 957.0m |
+| FactorGraph-MoG+2A [TCN] | 1045.0m |
+
+- TCN integration pipeline verified end-to-end (load + Bayesian prior update)
+- Limited by 800-epoch training data; full training expected to improve
+
+### New Scripts
+- `run_p0_frankfurt_retrain.bat`: P0 Frankfurt retraining only
+- `run_p0_p1_full_pipeline.bat`: Complete P0+P1 pipeline
+
+### Next Steps
+1. Run `run_p0_frankfurt_retrain.bat` to train exp_038/039
+2. Rebuild TCN caches with full epoch data
+3. Retrain TCNs with full data
+4. Run Module 2 evaluation with retrained Frankfurt models + TCNs

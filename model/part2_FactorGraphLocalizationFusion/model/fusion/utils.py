@@ -160,6 +160,13 @@ def load_mog_model(exp_name):
         best_path = os.path.join(result_dir, exp_name, 'final_model.pth')
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
+    # P0: Restore sigma clamp attributes if saved in checkpoint
+    if 'sigma_clamp_attrs' in checkpoint:
+        attrs = checkpoint['sigma_clamp_attrs']
+        model.sigma_los_clamp_log_min = attrs.get('los_min', -3.0)
+        model.sigma_los_clamp_log_max = attrs.get('los_max', 2.0)
+        model.sigma_nlos_clamp_log_min = attrs.get('nlos_min', -3.0)
+        model.sigma_nlos_clamp_log_max = attrs.get('nlos_max', 2.5)
     model.eval()
     return model, config, device
 
