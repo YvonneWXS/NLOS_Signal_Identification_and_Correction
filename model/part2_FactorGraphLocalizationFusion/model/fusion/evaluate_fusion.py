@@ -178,23 +178,105 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     print(f'    CEP50={results["FactorGraph-MoG"]["cep50"]:.1f}m (improved over WLS-MoG: {results["FactorGraph-MoG"]["pct_improved"]:.1f}%)')
     
     # ============================================================
-    # Method 6: FactorGraph-MoG+2A (placeholder — TCN not yet trained)
+    # Method 6: FactorGraph-MoG+2A (TCN temporal prior)
     # ============================================================
     print('  [6/6] FactorGraph-MoG+2A ...')
     tcn_available = False
     try:
-        from fusion.motion_geometry_predictor import MotionGeometryPredictor
-        tcn_path = os.path.join(os.path.dirname(result_dir), '..', '..', 'models', f'tcn_{dataset_name}.pth')
-        tcn_available = os.path.exists(tcn_path)
-    except: pass
+        tcn_models_dir = os.path.join(os.path.dirname(os.path.dirname(result_dir)), '..', 'models')
+        tcn_path = os.path.join(tcn_models_dir, f'tcn_{dataset_name}.pth')
+        if os.path.exists(tcn_path):
+            import torch
+            from fusion.train_tcn import SimpleTCN
+            tcn = SimpleTCN(63, 64, 20, 10)
+            ckpt = torch.load(tcn_path, map_location='cpu', weights_only=False)
+            # Handle both raw state_dict and dict-wrapped checkpoints
+            if 'model_state_dict' in ckpt:
+                tcn.load_state_dict(ckpt['model_state_dict'])
+            else:
+                tcn.load_state_dict(ckpt)
+            tcn.eval()
+            tcn_available = True
+    except Exception as e:
+        print(f'    TCN load failed: {e}')
     
     if tcn_available:
-        # TODO: integrate TCN prior injection
-        pass
-    
-    results['FactorGraph-MoG+2A'] = results['FactorGraph-MoG'].copy()
-    results['FactorGraph-MoG+2A']['tcn_available'] = tcn_available
-    print(f'    TCN available: {tcn_available}')
+        print('    TCN loaded, applying temporal prior...')
+        SEQ_LEN = 10; MAX_SV = 20
+        err_2d_tcn, err_3d_tcn, n_improved_tcn, n_conv_tcn = [], [], 0, 0
+        
+        for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+            if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0:
+                continue
+            
+            # Apply TCN temporal prior if we have enough history
+            p_los_updated = mog.get('p_los_sharp', mog['p_los']).copy()
+            
+            if i >= SEQ_LEN:
+                # Build input sequence
+                seq_input = np.zeros((SEQ_LEN, 63), dtype=np.float32)
+                for offset in range(SEQ_LEN, 0, -1):
+                    t = i - offset
+                    prev_mog = mog_outputs[t]
+                    prev_ep = all_epochs_data[t]
+                    if prev_mog is None:
+                        continue
+                    
+                    # Velocity
+                    vel = all_epochs_data[t]['gt_ecef'] - all_epochs_data[t-1]['gt_ecef'] if t > 0 else np.zeros(3)
+                    
+                    # Geometry per satellite
+                    geom = np.zeros((MAX_SV, 3))
+                    N_vis = min(len(prev_mog['elevation_deg']), MAX_SV)
+                    geom[:N_vis, 0] = prev_mog['elevation_deg'][:N_vis] / 90.0
+                    geom[:N_vis, 1] = prev_mog['azimuth_deg'][:N_vis] / 360.0
+                    geom[:N_vis, 2] = prev_mog.get('p_los_sharp', prev_mog['p_los'])[:N_vis]
+                    
+                    seq_input[offset-1, :3] = vel
+                    seq_input[offset-1, 3:] = geom.flatten()
+                
+                # TCN inference
+                with torch.no_grad():
+                    x_t = torch.tensor(seq_input, dtype=torch.float32).unsqueeze(0)
+                    p_nlos_pred = tcn(x_t).squeeze(0).numpy()  # (MAX_SV,)
+                
+                # Bayesian prior update: p_los_updated = p_los * (1-p_nlos) / Z
+                # Only apply where TCN is confident (|p_nlos - 0.5| > 0.15)
+                for j in range(min(len(p_los_updated), MAX_SV)):
+                    p_nlos_j = p_nlos_pred[j]
+                    if abs(p_nlos_j - 0.5) > 0.15:
+                        prior_los = 1.0 - p_nlos_j
+                        p_los_j = p_los_updated[j]
+                        # Bayes: posterior = prior * likelihood / Z
+                        posterior = (prior_los * p_los_j) / (prior_los * p_los_j + (1 - prior_los) * (1 - p_los_j))
+                        p_los_updated[j] = posterior
+            
+            # Use updated p_los
+            x_wls = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], p_los_updated, mog['sigma_los'])
+            x_fg, info_fg = positioner.solve_epoch(
+                sv_positions_all[i], pr_measured_all[i],
+                p_los_updated, mog['mu_nlos'],
+                mog['sigma_los'], mog['sigma_nlos']
+            )
+            err_fg = compute_2d_error(x_fg[:3], ep['gt_ecef'])
+            err_2d_tcn.append(err_fg)
+            err_3d_tcn.append(compute_3d_error(x_fg[:3], ep['gt_ecef']))
+            err_wls = compute_2d_error(x_wls[:3], ep['gt_ecef'])
+            if err_fg < err_wls:
+                n_improved_tcn += 1
+            if info_fg.get('success', False):
+                n_conv_tcn += 1
+        
+        results['FactorGraph-MoG+2A'] = compute_metrics(err_2d_tcn)
+        results['FactorGraph-MoG+2A']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d_tcn)**2)))
+        results['FactorGraph-MoG+2A']['pct_improved'] = float(n_improved_tcn / max(len(err_2d_tcn), 1) * 100)
+        results['FactorGraph-MoG+2A']['pct_converged'] = float(n_conv_tcn / max(len(err_2d_tcn), 1) * 100)
+        results['FactorGraph-MoG+2A']['tcn_available'] = True
+        print(f'    CEP50={results["FactorGraph-MoG+2A"]["cep50"]:.1f}m (improved: {results["FactorGraph-MoG+2A"]["pct_improved"]:.1f}%)')
+    else:
+        results['FactorGraph-MoG+2A'] = results['FactorGraph-MoG'].copy()
+        results['FactorGraph-MoG+2A']['tcn_available'] = False
+        print('    TCN not available, using FactorGraph-MoG result')
     
     # Save per-method detailed results
     os.makedirs(result_dir, exist_ok=True)

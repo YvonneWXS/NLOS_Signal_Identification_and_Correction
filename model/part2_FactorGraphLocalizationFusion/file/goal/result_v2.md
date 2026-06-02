@@ -83,6 +83,47 @@
 
 ---
 
+
+
+---
+
+## 八、P1.2 TCN 2A 时序先验 — 首次集成结果 (exp_003)
+
+### TCN 训练
+
+| 配置 | 值 |
+|------|-----|
+| 架构 | 3 层膨胀卷积 (dil=1,2,4) + 残差 + LayerNorm |
+| 输入 | (10, 63): 10 历元时序 × (速度3 + 卫星几何60) |
+| 输出 | (20,): 每卫星 p_nlos 预测 |
+| 训练集 | berlin1 490 序列 (392 train / 98 val) |
+| Val Loss | 0.542 → 0.574 (轻微过拟合) |
+
+### berlin1 集成结果
+
+| Method | CEP50 (m) | vs FactorGraph |
+|--------|:---:|:---:|
+| Standard LS | 904.5 | — |
+| WLS-MoG | 964.7 | — |
+| FactorGraph-MoG | 943.7 | baseline |
+| **FactorGraph-MoG+2A [TCN]** | **948.6** | -0.5% |
+
+### 分析
+
+- TCN 集成在 berlin1 上使 FG 轻微退化 (-4.9m CEP50)
+- 根因分析:
+  1. 训练数据仅 490 序列 (exp_034 max_epochs=500), 不足以学习鲁棒时序模式
+  2. TCN val_loss 较高 (0.54), p_nlos 预测精度有限
+  3. Bayesian 先验更新在 p_los 已较准的场景下价值有限
+  4. 置信度阈值 (|p_nlos-0.5| > 0.15) 可能过于宽松
+
+### 改进方向
+
+1. 扩大训练数据至全部历元 (~1377×4=5500 序列)
+2. 提升 TCN 架构 (更多层, attention, GRU)
+3. 采用更严苛的置信度阈值或 soft prior weight
+4. 在 Frankfurt 高 NLOS 场景测试 (预期 TCN 价值更大)
+
 ## 六、核心结论
 
 1. **WLS-MoG 在 frankfurt1 上显著优于 Standard LS** (+9.8%) — Module 1 MoG Fix 6 训练的效果

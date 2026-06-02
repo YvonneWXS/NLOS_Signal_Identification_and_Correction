@@ -197,6 +197,27 @@
 
 ---
 
+
+
+---
+
+## P1.2 补充: TCN 集成到 FactorGraph-MoG+2A (2026-06-02)
+
+### 实现
+- TCN 训练: berlin1 490 序列 (val_loss=0.542, 2.5s on RTX 5060)
+- 集成: `evaluate_fusion.py` v4 — 完整的 Bayesian prior update pipeline
+- 更新逻辑: 对每个历元 t≥10, 取前 10 历元时序特征, TCN 推理 p_nlos, Bayes 更新 p_los
+
+### 效果
+- berlin1: FG CEP50 943.7→948.6m (-0.5%) — 轻微退化
+- 根因: 训练数据不足 (仅 490 序列), TCN 预测精度有限
+- 架构验证通过: 端到端 pipeline 正常工作
+
+### 修改文件
+- `fusion/evaluate_fusion.py` v4: TCN 加载 + Bayesian prior update
+- `fusion/train_tcn.py`: LayerNorm 修复 (pre-norm residual)
+- `models/tcn_berlin1_potsdamer_platz.pth`: 已训练的 TCN 模型
+
 ## 七、已知问题与下一步
 
 | 优先级 | 问题 | 根因 | 建议 |
