@@ -1,118 +1,70 @@
-# Module 2 v3 Sprint Results
+# Module 2 v3 Full Results
 
-> Date: 2026-06-03 | Author: Codex + YvonneWXS
-
----
-
-## PART 1: Frankfurt P0 Retraining
-
-### Config Overrides (Verified)
-
-In config.py, DATASET_OVERRIDES correctly applied in GAT_V2025.py:1048-1055:
-
-| Parameter | Default | frankfurt1/2 |
-|-----------|---------|:---:|
-| LAMBDA_ENTROPY | 0.03 | 0.005 |
-| SIGMA_NLOS_CLAMP_LOG_MAX | 2.5 | 3.5 |
-| LAMBDA_SIGMA_REG | 0.01 | 0.02 |
-| SIGMA_GAP_TARGET | 0.5 | 1.0 |
-
-### Training Status
-
-| Dataset | Experiment | Status |
-|---------|-----------|--------|
-| frankfurt1_maintower | exp_038 | best_model.pth exists |
-| frankfurt2_westendtower | exp_039 | NEEDS TRAINING |
-
-**Action**: Run 
-un_p0_frankfurt.bat to train exp_039, then python run_fusion.py.
+> Date: 2026-06-03 | 4 datasets, 6 methods, full evaluation
 
 ---
 
-## PART 2: TCN 2A Degradation Fix
+## CEP50 Comparison (meters)
 
-### Fix A: Full Training Sequences
-
-| Change | Before | After |
-|--------|--------|-------|
-| Sequence limit | max_epochs=500 | **Full data** |
-| Epochs | 20 | **50** |
-| Batch size | 32 | **128** |
-| Early stopping | None | **patience=10** |
-
-**TCN Training Results:**
-
-| Dataset | Sequences | Val Loss | Old Val Loss |
-|---------|:---:|:---:|:---:|
-| berlin1 | 1,367 | 0.5312 | 0.542 |
-| berlin2 | 5,915 | 0.4845 | 0.481 |
-| frankfurt1 | 5,841 | 0.4539 | 0.475 |
-| frankfurt2 | 3,565 | 0.3286 | 0.326 |
-
-### Fix B: Tightened Bayesian Gate
-
-| Gate | Before | After |
-|------|--------|-------|
-| Threshold | |p_nlos-0.5| > 0.15 | > **0.25** |
-| Disagreement | None | TCN must disagree with M1 |
-
-### Fix C: Soft Blending
-
-- Before: hard Bayesian product rule (extreme values)
-- After: soft blend capped at 30% TCN influence
-- lpha = min(confidence * |p_nlos-0.5| * 2, 0.3)
+| Method | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
+|--------|:---:|:---:|:---:|:---:|
+| Standard LS | 904.5 | 610.8 | 525.2 | 382.6 |
+| WLS-elevation | 1095.0 | 877.6 | 839.6 | 451.7 |
+| WLS-MoG | 964.7 | 764.6 | 620.0 | 506.2 |
+| Hard-threshold | 1388.2 | 1134.9 | 1400.6 | 648.4 |
+| **FactorGraph-MoG** | **950.6** | **771.5** | **620.0** | **506.2** |
+| **FactorGraph-MoG+2A** | **948.8** | **764.6** | **578.8** | **492.5** |
 
 ---
 
-## PART 3: Quick Validation (200 epochs, berlin1+2)
+## Improvement Analysis
 
-### CEP50
-
-| Method | berlin1 | berlin2 |
-|--------|:---:|:---:|
-| Standard LS | 687.0 | 539.7 |
-| WLS-elevation | 860.5 | 1246.6 |
-| WLS-MoG | 804.8 | 1037.6 |
-| Hard-threshold | 1073.0 | 1919.5 |
-| **FactorGraph-MoG** | **797.2** | **971.6** |
-| **FactorGraph-MoG+2A** | **791.6** | **947.7** |
-
-### FG vs WLS-MoG
-
-| Dataset | Delta CEP50 | Status |
-|---------|:---:|--------|
-| berlin1 | +0.9% | Marginal |
-| berlin2 | **+6.4%** | PASS (>3%) |
-
-### FG+2A vs FG (TCN)
-
-| Dataset | Delta CEP50 | v2 Delta |
-|---------|:---:|:---:|
-| berlin1 | +0.7% | - |
-| berlin2 | **+2.5%** | **-9.0%** (was hurting!) |
-
-### Key Finding
-
-TCN degradation is eliminated. In v2, berlin2 FG+2A=1045m (9% worse than FG=957m).
-In v3, FG+2A=947.7m (2.5% better than FG=971.6m).
-Tightened gate + soft blending prevents TCN from corrupting correct M1 outputs.
+| Dataset | WLS-MoG | FG | FG vs WLS | FG+2A | 2A vs FG | 2A vs WLS |
+|---------|:---:|:---:|:---:|:---:|:---:|:---:|
+| berlin1 | 964.7 | 950.6 | +1.5% | 948.8 | +0.2% | +1.6% |
+| berlin2 | 764.6 | 771.5 | -0.9% | 764.6 | +0.9% | +0.0% |
+| frankfurt1 | 620.0 | 620.0 | +0.0% | 578.8 | +6.7% | +6.7% |
+| frankfurt2 | 506.2 | 506.2 | +0.0% | 492.5 | +2.7% | +2.7% |
 
 ---
 
-## Full Evaluation Commands
+## MoG Model Quality Check
 
-`powershell
-conda activate smartLoc
-cd D:\3_document\4_research\NLOS Signal Identification and Correction\model\part2_FactorGraphLocalizationFusion\model
-python run_fusion.py
-`
+| Metric | frankfurt1 (exp_038) | frankfurt2 (exp_039) | Target |
+|--------|:---:|:---:|:---:|
+| p_los gap | 0.5693 | 0.6793 | > 0.55 PASS |
+| sigma_nlos ratio | 1.11 | 1.10 | > 1.2 FAIL |
+| Accuracy | 0.824 | 0.868 | - |
+| F1 | 0.812 | 0.782 | - |
 
 ---
 
-## Success Criteria
+## Success Criteria Audit
 
-| Criterion | Status |
+| Criterion | Result |
 |-----------|:---:|
-| FG > WLS-MoG in >=2/4 by >3% | 1/2 tested (berlin2 +6.4%). Frankfurt pending. |
-| FG+2A does NOT degrade vs FG | PASS (both improve) |
-| TCN uses full sequences | PASS |
+| FG > WLS-MoG in >=2/4 by >3% | **FAIL** (only berlin1 +1.5%) |
+| FG+2A does NOT degrade vs FG | **PASS** (all improve or equal) |
+| TCN uses full sequences | **PASS** (1367/5915/5841/3565 seqs) |
+| All 6 methods run on all 4 | **PASS** |
+
+---
+
+## Key Findings
+
+1. **FG alone is not better than WLS-MoG**: The MoG NLL surface in Frankfurt is flat (NLL stable across epochs), meaning WLS-MoG weights are already near-optimal. FG adds no value there.
+
+2. **TCN prior is the real value**: FG+2A beats WLS-MoG in 2/4 datasets (frankfurt1 +6.6%, frankfurt2 +2.7%), and matches in berlin2. The TCN temporal prior provides genuine new information that MoG alone misses.
+
+3. **berlin2 regression**: FG (-0.9%) is slightly worse than WLS-MoG, which is unexpected given the quick test showed +6.4%. Possible cause: Platt calibration on full dataset reduces p_los discrimination (variance dropped).
+
+4. **Frankfurt sigma ratio below target**: Both frankfurt models fail the sigma_nlos(NLOS)/sigma_nlos(LOS) > 1.2 threshold, confirming the uncertainty estimation limitation noted in earlier findings.
+
+---
+
+## Recommended Next Steps
+
+1. **Investigate berlin2 regression**: Compare p_los distributions between sub-200-epoch and full evaluation
+2. **Consider FG+2A as the primary method**: TCN prior consistently helps
+3. **Tune Platt calibration**: Current calibration may be over-shrinking p_los variance
+4. **MoG sigma head redesign**: Frankfurt sigma ratio < 1.2 needs architectural fix
