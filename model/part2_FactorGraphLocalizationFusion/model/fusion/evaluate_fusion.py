@@ -7,7 +7,10 @@ import os, sys, json, time, numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fusion.baselines import (solve_standard_ls, solve_wls_elevation,
-                                solve_wls_mog, solve_hard_threshold)
+                                solve_wls_mog, solve_hard_threshold,
+                                solve_wls_aggressive_power, solve_wls_log_odds,
+                                solve_wls_soft_floor, solve_wls_geometry_aware,
+                                solve_wls_debiased, solve_raim_mog)
 from fusion.utils import fit_platt_scaling, apply_platt_scaling
 from fusion.factor_graph_fusion import FactorGraphPositioner
 from fusion.utils import compute_satellite_positions
@@ -149,6 +152,68 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     print(f'    CEP50={results["Hard-threshold"]["cep50"]:.1f}m')
     
     # ============================================================
+    # Method 4b: WLS-MoG-power3 (Scheme 1)
+    # ============================================================
+    print('  [4b/9] WLS-MoG-power3 ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_wls_aggressive_power(sv_positions_all[i], pr_measured_all[i],
+                                        mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'])
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['WLS-MoG-power3'] = compute_metrics(err_2d)
+    results['WLS-MoG-power3']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["WLS-MoG-power3"]["cep50"]:.1f}m')
+    
+    # ============================================================
+    # Method 4c: WLS-log-odds (Scheme 2)
+    # ============================================================
+    print('  [4c/9] WLS-log-odds ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_wls_log_odds(sv_positions_all[i], pr_measured_all[i],
+                                mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'])
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['WLS-log-odds'] = compute_metrics(err_2d)
+    results['WLS-log-odds']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["WLS-log-odds"]["cep50"]:.1f}m')
+    
+    # ============================================================
+    # Method 4d: WLS-debiased (Scheme 5) ? KEY FIX
+    # ============================================================
+    print('  [4d/9] WLS-debiased (mu_nlos correction) ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_wls_debiased(sv_positions_all[i], pr_measured_all[i],
+                                mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'],
+                                mog.get('mu_nlos', None))
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['WLS-debiased'] = compute_metrics(err_2d)
+    results['WLS-debiased']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["WLS-debiased"]["cep50"]:.1f}m')
+    
+    # ============================================================
+    # Method 4e: RAIM-MoG (Scheme 6)
+    # ============================================================
+    print('  [4e/9] RAIM-MoG (iterative exclusion) ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        x = solve_raim_mog(sv_positions_all[i], pr_measured_all[i],
+                            mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'],
+                            mog.get('sigma_nlos', None))
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['RAIM-MoG'] = compute_metrics(err_2d)
+    results['RAIM-MoG']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["RAIM-MoG"]["cep50"]:.1f}m')
+    
+    # ============================================================
     # Method 5: FactorGraph-MoG
     # ============================================================
     print('  [5/6] FactorGraph-MoG (multi-start L-BFGS-B) ...')
@@ -177,6 +242,38 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     results['FactorGraph-MoG']['pct_converged'] = float(n_conv / max(len(err_2d), 1) * 100)
     print(f'    CEP50={results["FactorGraph-MoG"]["cep50"]:.1f}m (improved over WLS-MoG: {results["FactorGraph-MoG"]["pct_improved"]:.1f}%)')
     
+    # ============================================================
+    # Method 5b: FactorGraph-debiased (v4)
+    # ============================================================
+    print('  [5b/9] FactorGraph-debiased ...')
+    positioner = FactorGraphPositioner()
+    err_2d_db, err_3d_db, n_imp_db, n_conv_db = [], [], 0, 0
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) == 0: continue
+        try:
+            x, info = positioner.solve_epoch_debiased(
+                sv_positions_all[i], pr_measured_all[i],
+                mog.get('p_los_sharp', mog['p_los']), mog['mu_nlos'],
+                mog['sigma_los'], mog['sigma_nlos'],
+                epoch_idx=i, dataset_name=dataset_name
+            )
+            err_db = compute_2d_error(x[:3], ep['gt_ecef'])
+            err_2d_db.append(err_db)
+            err_3d_db.append(compute_3d_error(x[:3], ep['gt_ecef']))
+            if info.get('improvement') == 'improved': n_imp_db += 1
+            if info.get('success', False): n_conv_db += 1
+        except Exception:
+            x = solve_standard_ls(sv_positions_all[i], pr_measured_all[i])
+            err_2d_db.append(compute_2d_error(x[:3], ep['gt_ecef']))
+            err_3d_db.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['FactorGraph-debiased'] = compute_metrics(err_2d_db)
+    results['FactorGraph-debiased']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d_db)**2)))
+    results['FactorGraph-debiased']['pct_improved'] = float(n_imp_db / max(len(err_2d_db), 1) * 100)
+    results['FactorGraph-debiased']['pct_converged'] = float(n_conv_db / max(len(err_2d_db), 1) * 100)
+    print(f'    CEP50={results["FactorGraph-debiased"]["cep50"]:.1f}m')
+    
+    # ============================================================
+    # Method 6: FactorGraph-MoG+2A (TCN temporal prior)
     # ============================================================
     # Method 6: FactorGraph-MoG+2A (TCN temporal prior)
     # ============================================================
@@ -328,4 +425,4 @@ def generate_report_table(all_results, output_path):
     return report
 
 
-print('fusion/evaluate_fusion.py v2 loaded (6 methods)')
+print('fusion/evaluate_fusion.py v4 loaded (9 methods)')

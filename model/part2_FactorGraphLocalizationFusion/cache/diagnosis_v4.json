@@ -1,0 +1,38 @@
+{
+  "berlin1": {
+    "primary": "CLOCK_COUPLING",
+    "secondary": "NONE",
+    "ratio": 2.788080389436672,
+    "frac_dop_inflation": 0.22657952069716775,
+    "mean_abs_delta_clk": 320.332967395211,
+    "corr_clk_err": 0.574903507810688,
+    "nlos_residual_reduction": -20.91099691968017
+  },
+  "berlin2": {
+    "primary": "UNKNOWN",
+    "secondary": "NONE",
+    "ratio": 2.529752289497976,
+    "frac_dop_inflation": 0.0,
+    "mean_abs_delta_clk": 299.2770473355057,
+    "corr_clk_err": 0.07843182378373259,
+    "nlos_residual_reduction": -15.059783414368107
+  },
+  "frankfurt1": {
+    "primary": "DOP_INFLATION",
+    "secondary": "CLOCK_COUPLING",
+    "ratio": 3.9389754685822393,
+    "frac_dop_inflation": 0.5821227140659716,
+    "mean_abs_delta_clk": 530.3969504033972,
+    "corr_clk_err": 0.6506612827225239,
+    "nlos_residual_reduction": -39.80210429557059
+  },
+  "frankfurt2": {
+    "primary": "CLOCK_COUPLING",
+    "secondary": "NONE",
+    "ratio": 3.2699044004735636,
+    "frac_dop_inflation": 0.15384615384615385,
+    "mean_abs_delta_clk": 277.8531659960336,
+    "corr_clk_err": 0.35373561976547724,
+    "nlos_residual_reduction": -35.31668074271578
+  }
+}

@@ -227,4 +227,66 @@ class FactorGraphPositioner:
             print(f'  [OK] Gradient verified: max rel error = {max_re:.6f}')
 
 
-print('fusion/factor_graph_fusion.py v3 loaded (P0.1 smooth grad + P1.1 diag + P2 multi-opt)')
+
+    def solve_epoch_debiased(self, sv_positions, pr_measured, p_los, mu_nlos,
+                             sigma_los, sigma_nlos, epoch_idx=0, dataset_name=''):
+        """v4: Debiased FactorGraph ? subtract NLOS bias before optimization.
+        
+        This is the primary fix for the MoG-vs-StandardLS problem identified
+        in Diagnosis D: NLOS pseudorange bias must be corrected, not just 
+        downweighted. Steps:
+        1. pr_corrected = pr - (1-p_los)*mu_nlos
+        2. Run WLS-debiased as initial solution
+        3. Optional: 2-3 L-BFGS-B refinement iterations
+        """
+        # Step 1: Debias pseudoranges
+        nlos_prob = 1.0 - np.clip(p_los, 0.0, 1.0)
+        predicted_bias = nlos_prob * mu_nlos
+        pr_corrected = pr_measured - predicted_bias
+        
+        # Step 2: WLS-debiased initial solution
+        from fusion.baselines import solve_wls_debiased
+        x_wls_db = solve_wls_debiased(sv_positions, pr_measured, p_los, sigma_los, mu_nlos)
+        
+        # Step 3: Quick L-BFGS-B refinement (2-3 iters only)
+        # Use the MoG model but with corrected pseudoranges
+        model = MoGObservationModel(p_los, mu_nlos, sigma_los, sigma_nlos)
+        
+        info = {
+            'success': True,
+            'method': 'debiased',
+            'nll_initial': None,
+            'nll_final': None,
+            'start_point': 'WLS-debiased',
+            'opt': 'L-BFGS-B-quick',
+        }
+        
+        try:
+            nll0, grad0 = model.neg_log_likelihood_and_grad(x_wls_db, pr_corrected)
+            info['nll_initial'] = float(nll0)
+            
+            # Quick refinement
+            from scipy.optimize import minimize
+            def obj(x):
+                n, g = model.neg_log_likelihood_and_grad(x, pr_corrected)
+                return n, g
+            
+            res = minimize(obj, x_wls_db, method='L-BFGS-B',
+                          jac=True, options={'maxiter': 3, 'ftol': 1e-4})
+            
+            nll_final, _ = model.neg_log_likelihood_and_grad(res.x, pr_corrected)
+            info['nll_final'] = float(nll_final)
+            
+            if nll_final < nll0 - 0.01:
+                info['improvement'] = 'improved'
+                info['delta_nll'] = float(nll0 - nll_final)
+                return res.x, info
+            else:
+                info['improvement'] = 'stable'
+                return x_wls_db, info
+                
+        except Exception:
+            info['improvement'] = 'fallback_wls'
+            return x_wls_db, info
+
+print('fusion/factor_graph_fusion.py v4 loaded (P0.1 smooth grad + P1.1 diag + P2 multi-opt)')
