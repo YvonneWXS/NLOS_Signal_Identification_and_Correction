@@ -240,16 +240,22 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
                     x_t = torch.tensor(seq_input, dtype=torch.float32).unsqueeze(0)
                     p_nlos_pred = tcn(x_t).squeeze(0).numpy()  # (MAX_SV,)
                 
-                # Bayesian prior update: p_los_updated = p_los * (1-p_nlos) / Z
-                # Only apply where TCN is confident (|p_nlos - 0.5| > 0.15)
+                # Fix B+C: Tightened gate + soft blending (v3)
+                # Gate conditions:
+                #   1. |p_nlos - 0.5| > 0.25 (TCN is directionally confident)
+                #   2. TCN must DISAGREE with Module 1 (provides new info)
+                # Soft blend capped at 30% TCN influence
                 for j in range(min(len(p_los_updated), MAX_SV)):
                     p_nlos_j = p_nlos_pred[j]
-                    if abs(p_nlos_j - 0.5) > 0.15:
-                        prior_los = 1.0 - p_nlos_j
-                        p_los_j = p_los_updated[j]
-                        # Bayes: posterior = prior * likelihood / Z
-                        posterior = (prior_los * p_los_j) / (prior_los * p_los_j + (1 - prior_los) * (1 - p_los_j))
-                        p_los_updated[j] = posterior
+                    p_los_gat_j = p_los_updated[j]
+                    confidence = 2.0 * abs(p_nlos_j - 0.5)  # [0, 1]
+                    tcn_disagrees = ((p_nlos_j > 0.6 and p_los_gat_j < 0.5) or
+                                     (p_nlos_j < 0.4 and p_los_gat_j > 0.5))
+                    
+                    if abs(p_nlos_j - 0.5) > 0.25 and tcn_disagrees:
+                        # Fix C: Soft blending
+                        alpha = min(confidence * abs(p_nlos_j - 0.5) * 2.0, 0.3)
+                        p_los_updated[j] = (1.0 - alpha) * p_los_gat_j + alpha * (1.0 - p_nlos_j)
             
             # Use updated p_los
             x_wls = solve_wls_mog(sv_positions_all[i], pr_measured_all[i], p_los_updated, mog['sigma_los'])

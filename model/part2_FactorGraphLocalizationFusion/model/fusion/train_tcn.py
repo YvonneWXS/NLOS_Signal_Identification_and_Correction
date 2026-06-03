@@ -16,9 +16,10 @@ from fusion.utils import load_epoch_data, load_mog_model, run_mog_inference
 MAX_SV = 20
 SEQ_LEN = 10
 HIDDEN_DIM = 64
-BATCH_SIZE = 32
-EPOCHS = 20
+BATCH_SIZE = 128
+EPOCHS = 50
 LR = 1e-3
+EARLY_STOP_PATIENCE = 10
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 MODELS_DIR = os.path.join(os.path.dirname(_MODEL_DIR), 'models')
 CACHE_DIR = os.path.join(os.path.dirname(_MODEL_DIR), 'cache')
@@ -28,12 +29,12 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 DATASETS = {
     'berlin1_potsdamer_platz': 'exp_034',
     'berlin2_gendarmenmarkt': 'exp_035',
-    'frankfurt1_maintower': 'exp_036',
-    'frankfurt2_westendtower': 'exp_037',
+    'frankfurt1_maintower': 'exp_038',
+    'frankfurt2_westendtower': 'exp_039',
 }
 
 
-def build_sequences(dataset_name, exp_name, max_epochs=None):
+def build_sequences(dataset_name, exp_name):
     '''Build training sequences from Module 1 outputs.'''
     cache_path = os.path.join(CACHE_DIR, f'{dataset_name}_tcn_data.pkl')
     if os.path.exists(cache_path):
@@ -41,7 +42,6 @@ def build_sequences(dataset_name, exp_name, max_epochs=None):
     
     print(f'  Building sequences for {dataset_name}...')
     all_epochs = load_epoch_data(dataset_name)
-    if max_epochs: all_epochs = all_epochs[:max_epochs]
     
     # Run Module 1 inference on all epochs
     model, config, device = load_mog_model(exp_name)
@@ -133,9 +133,9 @@ class SimpleTCN(nn.Module):
         return torch.sigmoid(self.out(h_last))  # (B, MAX_SV)
 
 
-def train_tcn(dataset_name, exp_name, max_epochs=None):
+def train_tcn(dataset_name, exp_name):
     print(f'\n===== Training TCN for {dataset_name} =====')
-    data = build_sequences(dataset_name, exp_name, max_epochs)
+    data = build_sequences(dataset_name, exp_name)
     
     X = torch.tensor(data['X']); Y = torch.tensor(data['Y']); M = torch.tensor(data['masks'])
     n = len(X); n_train = int(n * 0.8)
@@ -148,6 +148,8 @@ def train_tcn(dataset_name, exp_name, max_epochs=None):
     loss_fn = nn.BCELoss(reduction='none')
     
     best_val = float('inf')
+    best_epoch = 0
+    no_improve = 0
     for epoch in range(EPOCHS):
         model.train()
         total_loss = 0.0
@@ -167,9 +169,17 @@ def train_tcn(dataset_name, exp_name, max_epochs=None):
             val_loss = (loss_fn(pred_v, yv) * mv).sum() / mv.sum()
         
         if val_loss < best_val:
-            best_val = val_loss
+            best_val = val_loss.item()
+            best_epoch = epoch
+            no_improve = 0
             save_path = os.path.join(MODELS_DIR, f'tcn_{dataset_name}.pth')
             torch.save(model.state_dict(), save_path)
+        else:
+            no_improve += 1
+        
+        if no_improve >= EARLY_STOP_PATIENCE:
+            print(f'  Early stopping at epoch {epoch} (best={best_val:.4f} at epoch {best_epoch})')
+            break
         
         if epoch % 5 == 0:
             print(f'  Epoch {epoch}: train_loss={total_loss/((n_train+BATCH_SIZE-1)//BATCH_SIZE):.4f}, val_loss={val_loss.item():.4f}')
@@ -182,5 +192,5 @@ if __name__ == '__main__':
     print('TCN Trainer for Module 2A')
     print(f'Device: {DEVICE}')
     for ds, exp in DATASETS.items():
-        train_tcn(ds, exp, max_epochs=500)  # limit for speed
+        train_tcn(ds, exp)  # FULL data, no truncation
     print('\nAll TCN models trained!')

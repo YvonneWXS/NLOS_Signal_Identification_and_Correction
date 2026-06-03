@@ -23,8 +23,8 @@ from fusion.evaluate_fusion import evaluate_all_methods, generate_report_table
 DATASET_EXP_MAP = {
     'berlin1_potsdamer_platz': 'exp_034',
     'berlin2_gendarmenmarkt': 'exp_035',
-    'frankfurt1_maintower': 'exp_036',
-    'frankfurt2_westendtower': 'exp_037',
+    'frankfurt1_maintower': 'exp_038',
+    'frankfurt2_westendtower': 'exp_039',
 }
 
 
