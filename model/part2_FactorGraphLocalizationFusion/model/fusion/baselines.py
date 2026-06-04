@@ -1,4 +1,4 @@
-﻿# fusion/baselines.py v2 — 4 baseline positioning methods
+# fusion/baselines.py v2 — 4 baseline positioning methods
 # =========================================================
 # Jacobian: H[:,:3] = -LOS  (verified in debug_geometry.py)
 #            H[:,3]  = +1.0

@@ -1,4 +1,4 @@
-﻿# fusion/factor_graph_fusion.py v3
+# fusion/factor_graph_fusion.py v3
 # ================================================================
 # P0.1: Smooth gradient — replace all np.clip/maximum with smooth approx
 # P1.1: Per-epoch diagnostics — NLL improvement/degradation tracking

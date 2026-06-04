@@ -1,4 +1,4 @@
-﻿import os, sys, json, pickle, time, numpy as np
+import os, sys, json, pickle, time, numpy as np
 
 _MODEL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _MODEL_DIR)

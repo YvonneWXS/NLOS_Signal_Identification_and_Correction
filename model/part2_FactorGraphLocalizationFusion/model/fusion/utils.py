@@ -1,4 +1,4 @@
-﻿# fusion/utils.py v4 — Coordinate transforms, data loading (processed pickle),
+# fusion/utils.py v4 — Coordinate transforms, data loading (processed pickle),
 # Module 1 inference, and SP3-based satellite position computation.
 # Fix: correct feature extraction matching training (11 features, GNSS one-hot)
 

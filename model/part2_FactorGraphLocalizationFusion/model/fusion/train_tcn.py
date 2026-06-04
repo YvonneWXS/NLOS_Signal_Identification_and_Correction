@@ -1,4 +1,4 @@
-﻿# fusion/train_tcn.py — P1.2: Train 2A TCN prior predictor
+# fusion/train_tcn.py — P1.2: Train 2A TCN prior predictor
 # ==========================================================
 # Uses Module 1 MoG outputs as soft labels for NLOS prediction.
 # Trains one TCN per dataset.

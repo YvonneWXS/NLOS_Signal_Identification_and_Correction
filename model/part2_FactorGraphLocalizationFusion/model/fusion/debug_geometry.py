@@ -1,4 +1,4 @@
-﻿# debug_geometry.py — Part 1: Pseudorange Geometry Verification (P0)
+# debug_geometry.py — Part 1: Pseudorange Geometry Verification (P0)
 # ====================================================================
 # Step 1: Single epoch sanity check (PR vs geometric range)
 # Step 2: Clock bias estimation (median residual absorption)

@@ -1,4 +1,4 @@
-﻿# fusion/evaluate_fusion.py v2 — 6 methods, detailed metrics
+# fusion/evaluate_fusion.py v2 — 6 methods, detailed metrics
 # ============================================================
 # Methods: Standard LS, WLS-elevation, WLS-MoG, Hard-threshold,
 #          FactorGraph-MoG, FactorGraph-MoG+2A (if TCN available)

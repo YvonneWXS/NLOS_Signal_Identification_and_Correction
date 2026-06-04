@@ -1,4 +1,4 @@
-﻿"""
+"""
 fusion/motion_geometry_predictor.py — Module 2A: TCN NLOS Prior Predictor
 ==========================================================================
 Predicts next-epoch NLOS prior probabilities using historical trajectory
