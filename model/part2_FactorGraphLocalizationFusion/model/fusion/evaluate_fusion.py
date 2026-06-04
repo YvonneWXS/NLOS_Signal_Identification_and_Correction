@@ -13,6 +13,7 @@ from fusion.baselines import (solve_standard_ls, solve_wls_elevation,
                                 solve_wls_debiased, solve_raim_mog)
 from fusion.utils import fit_platt_scaling, apply_platt_scaling
 from fusion.factor_graph_fusion import FactorGraphPositioner
+from fusion.prnc import PRNCPositioner
 from fusion.utils import compute_satellite_positions
 
 
@@ -107,6 +108,56 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     results['Standard LS']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
     print(f'    CEP50={results["Standard LS"]["cep50"]:.1f}m')
     
+    # ============================================================
+    # [v5] Method 1b: PRNC-mu (direct mu_nlos correction)
+    # ============================================================
+    print('  [1b/12] PRNC-mu ...')
+    prnc = PRNCPositioner()
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) < 4: continue
+        x, _ = prnc.solve_mu(pr_measured_all[i], sv_positions_all[i],
+                              mog.get('p_los_sharp', mog['p_los']), mog['mu_nlos'])
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['PRNC-mu'] = compute_metrics(err_2d)
+    results['PRNC-mu']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["PRNC-mu"]["cep50"]:.1f}m')
+
+    # ============================================================
+    # [v5] Method 1c: PRNC-adaptive
+    # ============================================================
+    print('  [1c/12] PRNC-adaptive ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) < 4: continue
+        x, _ = prnc.solve_adaptive(pr_measured_all[i], sv_positions_all[i],
+                                    mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'], mog.get('mu_nlos'))
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['PRNC-adaptive'] = compute_metrics(err_2d)
+    results['PRNC-adaptive']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["PRNC-adaptive"]["cep50"]:.1f}m')
+
+    # ============================================================
+    # [v5] Method 1d: PRNC-mu-adaptive (mu + residual combined)
+    # ============================================================
+    print('  [1d/12] PRNC-mu-adaptive ...')
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(mog.get('p_los_sharp', mog['p_los'])) < 4: continue
+        # Adaptive with mu_nlos enabled (mu*0.3 weighting in solve_adaptive)
+        x, _ = prnc.solve_adaptive(pr_measured_all[i], sv_positions_all[i],
+                                    mog.get('p_los_sharp', mog['p_los']), mog['sigma_los'],
+                                    mog.get('mu_nlos'))
+        err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+        err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+    results['PRNC-mu-adaptive'] = compute_metrics(err_2d)
+    results['PRNC-mu-adaptive']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+    print(f'    CEP50={results["PRNC-mu-adaptive"]["cep50"]:.1f}m')
+
+    # ============================================================
+    # Method 2: WLS-elevation
     # ============================================================
     # Method 2: WLS-elevation
     # ============================================================
@@ -425,4 +476,4 @@ def generate_report_table(all_results, output_path):
     return report
 
 
-print('fusion/evaluate_fusion.py v4 loaded (9 methods)')
+print('fusion/evaluate_fusion.py v5 loaded (12 methods)')

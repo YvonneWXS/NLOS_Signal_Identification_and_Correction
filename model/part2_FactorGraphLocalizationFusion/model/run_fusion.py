@@ -21,10 +21,10 @@ from fusion.evaluate_fusion import evaluate_all_methods, generate_report_table
 
 # Dataset to Module 1 experiment mapping
 DATASET_EXP_MAP = {
-    'berlin1_potsdamer_platz': 'exp_034',
-    'berlin2_gendarmenmarkt': 'exp_035',
-    'frankfurt1_maintower': 'exp_038',
-    'frankfurt2_westendtower': 'exp_039',
+    'berlin1_potsdamer_platz': 'exp_040'  # v5 mu-supervised,
+    'berlin2_gendarmenmarkt': 'exp_041'  # v5 mu-supervised,
+    'frankfurt1_maintower': 'exp_042'  # v5 mu-supervised,
+    'frankfurt2_westendtower': 'exp_043'  # v5 mu-supervised,
 }
 
 
