@@ -14,6 +14,7 @@ from fusion.baselines import (solve_standard_ls, solve_wls_elevation,
 from fusion.utils import fit_platt_scaling, apply_platt_scaling
 from fusion.factor_graph_fusion import FactorGraphPositioner
 from fusion.prnc import PRNCPositioner
+from fusion.los_anchored_ls import LOS_ANCHORED_METHODS
 from fusion.utils import compute_satellite_positions
 
 
@@ -432,6 +433,48 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
         results['FactorGraph-MoG+2A']['tcn_available'] = False
         print('    TCN not available, using FactorGraph-MoG result')
     
+
+    # ============================================================
+    # [v6] Method 7-11: LOS-Anchored methods (clock contamination fix)
+    # ============================================================
+    p_los_all = []
+    sigma_los_all = []
+    mu_nlos_all = []
+    for mog in mog_outputs:
+        if mog is not None:
+            p_los_all.append(mog.get('p_los_sharp', mog.get('p_los', np.ones(len(sv_positions_all[0])))))
+            sigma_los_all.append(mog.get('sigma_los', np.ones(len(sv_positions_all[0]))))
+            mu_nlos_all.append(mog.get('mu_nlos', np.zeros(len(sv_positions_all[0]))))
+        else:
+            p_los_all.append(None)
+            sigma_los_all.append(None)
+            mu_nlos_all.append(None)
+
+    for method_name, method_fn in LOS_ANCHORED_METHODS.items():
+        short_idx = list(LOS_ANCHORED_METHODS.keys()).index(method_name) + 1
+        print(f'  [v6-{short_idx}/5] {method_name} ...')
+        err_2d, err_3d = [], []
+        for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+            if mog is None or len(sv_positions_all[i]) < 4:
+                continue
+            try:
+                x, clk = method_fn(
+                    ep['obs'], sv_positions_all[i],
+                    p_los_all[i], sigma_los_all[i], mu_nlos=mu_nlos_all[i]
+                )
+                err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+                err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+            except Exception:
+                continue
+        if len(err_2d) > 0:
+            results[method_name] = compute_metrics(err_2d)
+            results[method_name]['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+            print(f'    CEP50={results[method_name]["cep50"]:.1f}m')
+        else:
+            results[method_name] = {'cep50': None, 'error': 'all epochs failed'}
+            print(f'    FAILED')
+
+    # Save per-method detailed results
     # Save per-method detailed results
     os.makedirs(result_dir, exist_ok=True)
     return results

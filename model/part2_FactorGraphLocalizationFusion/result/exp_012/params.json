@@ -1,0 +1,37 @@
+{
+  "datasets": [
+    "berlin1_potsdamer_platz",
+    "berlin2_gendarmenmarkt",
+    "frankfurt1_maintower",
+    "frankfurt2_westendtower"
+  ],
+  "module1_experiments": {
+    "berlin1_potsdamer_platz": "exp_040",
+    "berlin2_gendarmenmarkt": "exp_041",
+    "frankfurt1_maintower": "exp_042",
+    "frankfurt2_westendtower": "exp_043"
+  },
+  "methods": [
+    "platt_calibration",
+    "Standard LS",
+    "PRNC-mu",
+    "PRNC-adaptive",
+    "PRNC-mu-adaptive",
+    "WLS-elevation",
+    "WLS-MoG",
+    "Hard-threshold",
+    "WLS-MoG-power3",
+    "WLS-log-odds",
+    "WLS-debiased",
+    "RAIM-MoG",
+    "FactorGraph-MoG",
+    "FactorGraph-debiased",
+    "FactorGraph-MoG+2A",
+    "LOS-Anchored-LS",
+    "LOS-Anchored-WLS-MoG",
+    "LOS-Anchored-PRNC",
+    "LOS-Anchored-Debiased-WLS",
+    "LOS-Anchored-Combined"
+  ],
+  "total_time_min": 14.20957193771998
+}
