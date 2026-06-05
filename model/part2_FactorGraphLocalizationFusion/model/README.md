@@ -3,7 +3,7 @@
 > Urban GNSS NLOS Signal Identification & Correction
 > Module 2: WLS / Factor Graph / PRNC / LOS-Anchored positioning using Module 1 GAT outputs (p_los, mu_nlos, sigma_los, sigma_nlos)
 
-**Current version: v6 (2026-06-05)** -- LOS-anchored clock fix (hypothesis rejected), 16-method evaluation
+**Current version: v7 (2026-06-05)** -- mu_nlos direction fix (direction CORRECT, positioning regressed), 20-method evaluation -- LOS-anchored clock fix (hypothesis rejected), 16-method evaluation
 
 ---
 
@@ -167,7 +167,7 @@ Validates the v6 hypothesis: whether clock estimate absorbs NLOS positive bias, 
 
 ---
 
-### fusion/evaluate_fusion.py -- 16-Method Evaluation (v6)
+### fusion/evaluate_fusion.py -- 20-Method Evaluation (v7)
 
 | # | Method | Uses M1 Outputs | Description |
 |:---:|------|:---:|------|
@@ -191,6 +191,48 @@ Validates the v6 hypothesis: whether clock estimate absorbs NLOS positive bias, 
 Metrics: CEP50, CEP95, Mean 2D, RMSE 3D
 
 ---
+
+
+---
+
+## v7 Core Conclusions (2026-06-05)
+
+**mu_nlos direction FIXED in all 4 datasets. Positioning REGRESSED due to mu_nlos magnitude collapse.**
+
+### mu_nlos Direction: v5 vs v7
+
+| Dataset | v5 Direction | v7 Direction | v7 Margin |
+|--------|:---:|:---:|:---:|
+| berlin1 | WRONG (-22m) | **OK** | +196m |
+| berlin2 | WRONG (-136m) | **OK** | +147m |
+| frankfurt1 | WRONG (-70m) | **OK** | +173m |
+| frankfurt2 | WRONG (-191m) | **OK** | +158m |
+
+### CEP50 Comparison (m) - v6 vs v7 (Key Methods)
+
+| Method | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
+|--------|:---:|:---:|:---:|:---:|
+| **Standard LS** | 904.5 | 610.8 | 525.2 | 382.6 |
+| WLS-MoG (v7) | 940.5 | 800.2 | 623.6 | 510.4 |
+| WLS-debiased (v7) | 979.5 | 863.1 | 628.6 | 547.5 |
+| Debiased-WLS-v2 (v7) | 987.5 | 863.3 | 606.9 | 556.3 |
+| PRNC-mu-corrected (v7) | 965.8 | 740.4 | 580.1 | 477.9 |
+| **FG-MoG+2A (v6 best)** | 959.6 | 778.8 | **445.7 (+15.1%)** | 494.5 |
+| FG-MoG+2A (v7) | 946.4 | 784.9 | 582.8 (-11.0%) | 497.7 |
+
+### Why v7 Regressed
+
+1. **mu_nlos magnitude collapsed**: LAMBDA_MU_REG weakened from 0.30 to 0.05 + aggressive MuDirectionLoss weights (2.0x + 3.0x) caused all mu values to shrink. v7 mu_NLOS = 181-223m vs v5 mu_NLOS = 162-395m (but v5 had wrong direction).
+2. **Direction fix is necessary but NOT sufficient**: Correct direction alone doesn't improve positioning when magnitude is too small for meaningful correction.
+3. **Frankfurt1 regression is the clearest signal**: v6 FG-MoG+2A achieved +15.1% (445.7m) on frankfurt1. v7 degraded to -11.0% (582.8m). The wrong-direction v6 model had better sigma calibration by coincidence.
+
+### Scientific Contribution
+
+The v7 experiment proves:
+1. MuDirectionLoss can reliably fix mu_nlos direction in all datasets
+2. Direction correction alone does not improve downstream positioning
+3. mu_nlos magnitude and direction are coupled through the loss function
+4. A pure ranking loss (without magnitude suppression) is needed for v8
 
 ## v6 Core Conclusions (2026-06-05)
 
@@ -289,7 +331,12 @@ Metrics: CEP50, CEP95, Mean 2D, RMSE 3D
 
 ## Related Documents
 
+- [goal_v7.md](file/goal/goal_v7.md) -- v7 objective: fix mu_nlos direction
+- [result_v7.md](file/goal/result_v7.md) -- v7 evaluation results + regression analysis
+- [change_v7.md](file/goal/change_v7.md) -- v7 code change log
 - [goal_v6.md](file/goal/goal_v6.md) -- v6 objective: LOS-anchored clock contamination fix
+- [result_v6.md](file/goal/result_v6.md) -- v6 evaluation results + hypothesis rejection
+- [change_v6.md](file/goal/change_v6.md) -- v6 code change log
 - [result_v6.md](file/goal/result_v6.md) -- v6 evaluation results + hypothesis rejection
 - [change_v6.md](file/goal/change_v6.md) -- v6 code change log
 - [goal_v5.md](file/goal/goal_v5.md) -- v5 objective: PRNC pseudorange correction

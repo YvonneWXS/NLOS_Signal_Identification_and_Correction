@@ -94,3 +94,46 @@ class PRNCPositioner:
 
 
 print("fusion/prnc.py loaded (PRNC ? uniform weights, DOP-preserving)")
+
+
+import numpy as np
+
+def solve_prnc_mu_corrected(pr_mes, sv_positions, p_los, sigma_los, mu_nlos, max_iter=7):
+    """[v7] PRNC-mu with direction-corrected mu_nlos from exp_044-047.
+
+    Safety gate: if mu_nlos direction is still wrong, fall back to Standard LS.
+    Otherwise, subtract p_nlos * mu_nlos and run WLS with corrected measurements.
+    """
+    p_nlos = 1.0 - p_los
+
+    # Safety gate: check mu_nlos direction
+    los_mask = p_los > 0.7
+    nlos_mask = p_los < 0.3
+    if los_mask.sum() > 0 and nlos_mask.sum() > 0:
+        if mu_nlos[los_mask].mean() > mu_nlos[nlos_mask].mean():
+            from fusion.baselines import solve_standard_ls
+            return solve_standard_ls(sv_positions, pr_mes)
+
+    correction = p_nlos * mu_nlos
+    pr_corrected = pr_mes - correction
+
+    x = np.zeros(4)
+    x[2] = 6371.0
+    x[3] = np.median(pr_corrected - np.linalg.norm(sv_positions - x[:3], axis=1))
+
+    for _ in range(max_iter):
+        dist = np.linalg.norm(sv_positions - x[:3], axis=1)
+        h = dist + x[3]
+        residuals = pr_corrected - h
+        los_vecs = (sv_positions - x[:3]) / dist[:, np.newaxis]
+        H = np.hstack([-los_vecs, np.ones((len(pr_mes), 1))])
+        try:
+            delta = np.linalg.lstsq(H, residuals, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            break
+        x += delta
+        if np.linalg.norm(delta[:3]) * 1000 < 0.1:
+            break
+
+    return x
+
