@@ -205,5 +205,98 @@ def solve_raim_mog(sv_positions, pr_measured, p_los, sigma_los, sigma_nlos=None,
     return solve_standard_ls(sv_positions[active], pr_measured[active], x0, max_iter_wls)
 
 
-print('fusion/baselines.py v4 loaded (H=-LOS verified, 6 new schemes)')
+
+def solve_debiased_wls_v2(sv_positions, pr_measured, p_los, sigma_los, mu_nlos, x0=None, max_iter=10):
+    """[v7] Debiased WLS with direction-corrected mu_nlos from exp_044-047.
+
+    pr_corrected = pr - (1-p_los) * mu_nlos, then WLS with p_los/sigma^2 weights.
+    Key difference from v4 WLS-debiased: mu_nlos direction is correct (mu_NLOS > mu_LOS).
+    """
+    p_nlos = 1.0 - p_los
+    pr_corrected = pr_measured - p_nlos * mu_nlos
+
+    weights = np.maximum(0.01, p_los) / np.maximum(0.01, sigma_los**2)
+
+    if x0 is None:
+        x = np.zeros(4)
+        x[2] = 6371.0  # Earth radius km
+        x[3] = np.median(pr_corrected - np.linalg.norm(sv_positions - x[:3], axis=1))
+    else:
+        x = x0.copy()
+
+    for _ in range(max_iter):
+        dist = np.linalg.norm(sv_positions - x[:3], axis=1)
+        h = dist + x[3]
+        residuals = pr_corrected - h
+        los_vecs = (sv_positions - x[:3]) / dist[:, np.newaxis]
+        H = np.hstack([-los_vecs, np.ones((len(pr_corrected), 1))])
+        W = np.diag(weights)
+        try:
+            delta = np.linalg.lstsq(np.sqrt(W) @ H, np.sqrt(W) @ residuals, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            break
+        x += delta
+        if np.linalg.norm(delta[:3]) * 1000 < 0.1:
+            break
+
+    return x
+
+
+def solve_geometry_aware_debiased_wls(sv_positions, pr_measured, p_los, sigma_los,
+                                       mu_nlos, x0=None, max_iter=10):
+    """[v7] Geometry-aware debiased WLS.
+
+    Step 1: Initial Standard LS for approximate position.
+    Step 2: Select satellites using geometry-aware selection (only remove NLOS
+            sats if PDOP increase <= 15%).
+    Step 3: Debias selected sats: pr_corrected = pr - (1-p_los)*mu_nlos.
+    Step 4: WLS with weights p_los/sigma^2 on selected+debiased sats.
+    Step 5: Iterate steps 2-4 until convergence.
+    """
+    from fusion.los_anchored_ls import select_satellites_geometry_aware
+
+    p_nlos = 1.0 - p_los
+    pr_corrected = pr_measured - p_nlos * mu_nlos
+
+    if x0 is None:
+        x = np.zeros(4)
+        x[2] = 6371.0
+        x[3] = np.median(pr_corrected - np.linalg.norm(sv_positions - x[:3], axis=1))
+    else:
+        x = x0.copy()
+
+    for iteration in range(max_iter):
+        # Geometry-aware satellite selection
+        try:
+            selected = select_satellites_geometry_aware(
+                sv_positions, p_los, sigma_los, x[:3], min_sats=5)
+        except Exception:
+            selected = np.arange(len(p_los))
+
+        sv_sel = sv_positions[selected]
+        pr_sel = pr_corrected[selected]
+        p_los_sel = p_los[selected]
+        sigma_sel = sigma_los[selected]
+
+        weights = np.maximum(0.01, p_los_sel) / np.maximum(0.01, sigma_sel**2)
+
+        dist = np.linalg.norm(sv_sel - x[:3], axis=1)
+        h = dist + x[3]
+        residuals = pr_sel - h
+        los_vecs = (sv_sel - x[:3]) / dist[:, np.newaxis]
+        H = np.hstack([-los_vecs, np.ones((len(pr_sel), 1))])
+        W = np.diag(weights)
+        try:
+            delta = np.linalg.lstsq(np.sqrt(W) @ H, np.sqrt(W) @ residuals, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            break
+        x += delta
+        if np.linalg.norm(delta[:3]) * 1000 < 0.1:
+            break
+
+    return x
+
+
+print("fusion/baselines.py v7 loaded (+debiased_wls_v2, +geometry_aware_debiased_wls)")
+
 

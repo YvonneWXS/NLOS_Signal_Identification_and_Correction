@@ -477,6 +477,107 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     # Save per-method detailed results
     # Save per-method detailed results
     os.makedirs(result_dir, exist_ok=True)
+    
+    # ============================================================
+    # [v7] Method 12: Debiased-WLS-v2 (corrected mu, no geometry selection)
+    # ============================================================
+    print('  [v7-1/4] Debiased-WLS-v2 ...')
+    from fusion.baselines import solve_debiased_wls_v2
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(sv_positions_all[i]) < 4:
+            continue
+        try:
+            x = solve_debiased_wls_v2(sv_positions_all[i], pr_measured_all[i],
+                                       p_los_all[i], sigma_los_all[i], mu_nlos_all[i])
+            err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+            err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+        except Exception:
+            continue
+    if len(err_2d) > 0:
+        results['Debiased-WLS-v2'] = compute_metrics(err_2d)
+        results['Debiased-WLS-v2']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+        print(f'    CEP50={results["Debiased-WLS-v2"]["cep50"]:.1f}m')
+    else:
+        results['Debiased-WLS-v2'] = {'cep50': None, 'error': 'all epochs failed'}
+        print('    FAILED')
+
+    # ============================================================
+    # [v7] Method 13: Geometry-Aware-Debiased-WLS
+    # ============================================================
+    print('  [v7-2/4] Geometry-Aware-Debiased-WLS ...')
+    from fusion.baselines import solve_geometry_aware_debiased_wls
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(sv_positions_all[i]) < 4:
+            continue
+        try:
+            x = solve_geometry_aware_debiased_wls(sv_positions_all[i], pr_measured_all[i],
+                                                   p_los_all[i], sigma_los_all[i], mu_nlos_all[i])
+            err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+            err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+        except Exception:
+            continue
+    if len(err_2d) > 0:
+        results['Geometry-Aware-Debiased-WLS'] = compute_metrics(err_2d)
+        results['Geometry-Aware-Debiased-WLS']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+        print(f'    CEP50={results["Geometry-Aware-Debiased-WLS"]["cep50"]:.1f}m')
+    else:
+        results['Geometry-Aware-Debiased-WLS'] = {'cep50': None, 'error': 'all epochs failed'}
+        print('    FAILED')
+
+    # ============================================================
+    # [v7] Method 14: PRNC-mu-corrected
+    # ============================================================
+    print('  [v7-3/4] PRNC-mu-corrected ...')
+    from fusion.prnc import solve_prnc_mu_corrected
+    err_2d, err_3d = [], []
+    for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
+        if mog is None or len(sv_positions_all[i]) < 4:
+            continue
+        try:
+            x = solve_prnc_mu_corrected(pr_measured_all[i], sv_positions_all[i],
+                                         p_los_all[i], sigma_los_all[i], mu_nlos_all[i])
+            err_2d.append(compute_2d_error(x[:3], ep['gt_ecef']))
+            err_3d.append(compute_3d_error(x[:3], ep['gt_ecef']))
+        except Exception:
+            continue
+    if len(err_2d) > 0:
+        results['PRNC-mu-corrected'] = compute_metrics(err_2d)
+        results['PRNC-mu-corrected']['rmse_3d'] = float(np.sqrt(np.mean(np.array(err_3d)**2)))
+        print(f'    CEP50={results["PRNC-mu-corrected"]["cep50"]:.1f}m')
+    else:
+        results['PRNC-mu-corrected'] = {'cep50': None, 'error': 'all epochs failed'}
+        print('    FAILED')
+
+    # ============================================================
+    # [v7] Method 15: mu_nlos Direction Quality Report
+    # ============================================================
+    print('  [v7-4/4] mu_nlos Direction Check ...')
+    all_mu_vals = []
+    all_plos_vals = []
+    for mog in mog_outputs:
+        if mog is not None:
+            all_mu_vals.extend(mog.get('mu_nlos', []))
+            all_plos_vals.extend(mog.get('p_los', []))
+    if len(all_mu_vals) > 0:
+        all_mu_vals = np.array(all_mu_vals)
+        all_plos_vals = np.array(all_plos_vals)
+        los_mask = all_plos_vals > 0.7
+        nlos_mask = all_plos_vals < 0.3
+        mu_los = all_mu_vals[los_mask].mean() if los_mask.any() else 0
+        mu_nlos = all_mu_vals[nlos_mask].mean() if nlos_mask.any() else 0
+        direction_ok = mu_nlos > mu_los
+        margin = mu_nlos - mu_los
+        print(f'    mu_LOS={mu_los*1000:.0f}m  mu_NLOS={mu_nlos*1000:.0f}m  margin={margin*1000:.0f}m  dir={ "OK" if direction_ok else "WRONG"}')
+        results['_mu_direction'] = {
+            'mu_los_km': float(mu_los),
+            'mu_nlos_km': float(mu_nlos),
+            'margin_km': float(margin),
+            'direction_correct': bool(direction_ok)
+        }
+
+    # Save per-method detailed results
     return results
 
 
@@ -519,4 +620,4 @@ def generate_report_table(all_results, output_path):
     return report
 
 
-print('fusion/evaluate_fusion.py v5 loaded (12 methods)')
+print('fusion/evaluate_fusion.py v7 loaded (20 methods)')
