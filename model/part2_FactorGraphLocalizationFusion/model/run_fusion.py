@@ -7,10 +7,10 @@ from fusion.utils import load_epoch_data, load_mog_model, run_mog_inference
 from fusion.evaluate_fusion import evaluate_all_methods, generate_report_table
 
 DATASET_EXP_MAP = {
-    'berlin1_potsdamer_platz': 'exp_044',
-    'berlin2_gendarmenmarkt': 'exp_045',
-    'frankfurt1_maintower': 'exp_046',
-    'frankfurt2_westendtower': 'exp_047',
+    'berlin1_potsdamer_platz': 'exp_048',
+    'berlin2_gendarmenmarkt': 'exp_049',
+    'frankfurt1_maintower': 'exp_050',
+    'frankfurt2_westendtower': 'exp_051',
 }
 
 def run_single_dataset(dataset_name, exp_name, result_dir):

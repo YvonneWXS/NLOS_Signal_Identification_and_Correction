@@ -3,7 +3,7 @@
 > Urban GNSS NLOS Signal Identification & Correction
 > Module 2: WLS / Factor Graph / PRNC / LOS-Anchored positioning using Module 1 GAT outputs (p_los, mu_nlos, sigma_los, sigma_nlos)
 
-**Current version: v7 (2026-06-05)** -- mu_nlos direction fix (direction CORRECT, positioning regressed), 20-method evaluation -- LOS-anchored clock fix (hypothesis rejected), 16-method evaluation
+**Current version: v8 (2026-06-05)** -- pure pairwise ranking mu_nlos fix (direction + magnitude both OK), frankfurt1 WLS-MoG +7.2% -- mu_nlos direction fix (direction CORRECT, positioning regressed), 20-method evaluation -- LOS-anchored clock fix (hypothesis rejected), 16-method evaluation
 
 ---
 
@@ -195,6 +195,41 @@ Metrics: CEP50, CEP95, Mean 2D, RMSE 3D
 
 ---
 
+
+---
+
+## v8 Core Conclusions (2026-06-05)
+
+**mu_nlos direction CORRECT + magnitude RESTORED in all 4 datasets. Frankfurt1 WLS-MoG beats Standard LS (+7.2%).**
+
+### mu_nlos Evolution: v5 -> v7 -> v8
+
+| Dataset | v5 Direction | v7 Direction | v8 Direction | v8 mu_NLOS | v8 Margin |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| berlin1 | WRONG (-22m) | OK (+196m, collapsed) | **OK** | 308m | +117m |
+| berlin2 | WRONG (-136m) | OK (+147m, collapsed) | **OK** | 216m | +143m |
+| frankfurt1 | WRONG (-70m) | OK (+173m, collapsed) | **OK** | 237m | +121m |
+| frankfurt2 | WRONG (-191m) | OK (+158m, collapsed) | **OK** | 260m | +119m |
+
+### Frankfurt1 Positioning Recovery
+
+| Version | WLS-MoG | FG-MoG+2A |
+|--------|:---:|:---:|
+| v6 | 459.4m (+12.5%) | 445.7m (+15.1%) |
+| v7 (direction fix, collapse) | 623.6m (-18.8%) | 582.8m (-11.0%) |
+| **v8 (ranking fix, no collapse)** | **487.2m (+7.2%)** | **476.9m (+9.2%)** |
+
+### Key Findings
+
+1. **Pure pairwise ranking fixes direction without magnitude collapse**: Removing LOS suppression (v7's 2.0x penalty) and using only relative ordering restored mu_NLOS from 181-223m to 216-308m.
+2. **LAMBDA_MU_REG=0.20 is the sweet spot**: Between v5's 0.30 (too strong, caused wrong direction) and v7's 0.05 (too weak, caused collapse).
+3. **MuDirectionLoss weight 1.0 is sufficient**: v7's 5.0 total weight was excessive. v8's 1.0 pairwise ranking loss provides adequate gradient.
+4. **Module 1 has reached practical ceiling**: Classification (F1 0.84-0.91) and mu direction (all correct) are sufficient for downstream use.
+
+### Module 3 Recommendation: PROCEED
+
+Frankfurt1 proves soft information works. Module 3 residual feedback should generalize this to other datasets by adaptively learning scene-specific geometry parameters.
+
 ## v7 Core Conclusions (2026-06-05)
 
 **mu_nlos direction FIXED in all 4 datasets. Positioning REGRESSED due to mu_nlos magnitude collapse.**
@@ -331,7 +366,12 @@ The v7 experiment proves:
 
 ## Related Documents
 
-- [goal_v7.md](file/goal/goal_v7.md) -- v7 objective: fix mu_nlos direction
+- [goal_v8.md](file/goal/goal_v8.md) -- v8 objective: pure pairwise ranking mu fix
+- [result_v8.md](file/goal/result_v8.md) -- v8 evaluation results
+- [change_v8.md](file/goal/change_v8.md) -- v8 code change log
+- [goal_v7.md](file/goal/goal_v7.md) -- v7 objective: fix mu_nlos direction (superseded)
+- [result_v7.md](file/goal/result_v7.md) -- v7 results: direction fixed, magnitude collapsed
+- [change_v7.md](file/goal/change_v7.md) -- v7 code change log
 - [result_v7.md](file/goal/result_v7.md) -- v7 evaluation results + regression analysis
 - [change_v7.md](file/goal/change_v7.md) -- v7 code change log
 - [goal_v6.md](file/goal/goal_v6.md) -- v6 objective: LOS-anchored clock contamination fix
