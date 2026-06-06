@@ -2,7 +2,7 @@
 
 > Urban GNSS NLOS Signal Identification & Correction  
 > **Module 3**: Residual feedback + adaptive online correction using positioning residuals from Module 2  
-> **Current version: v1** (2026-06-06) — Adaptive-M3 beats Standard LS in ALL 4 datasets
+> **Current version: v2 (2026-06-06) — 4/6 success criteria PASS. Standard LS metric matches Module 2. C3 online learning fixed (+44% frankfurt1).
 
 ---
 
@@ -203,3 +203,4 @@ Runs the full pipeline on all 4 datasets:
 - [Module 1 Documentation](../../part1_GAT/model/README.md)
 - [Module 2 Documentation](../../part2_FactorGraphLocalizationFusion/model/README.md)
 - [Main Project README](../../../README.md)
+
