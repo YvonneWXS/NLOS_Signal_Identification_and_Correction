@@ -1,0 +1,43 @@
+{
+  "experiment": "exp_002",
+  "datasets": [
+    "berlin1_potsdamer_platz",
+    "berlin2_gendarmenmarkt",
+    "frankfurt1_maintower",
+    "frankfurt2_westendtower"
+  ],
+  "module1_experiments": [
+    "exp_048",
+    "exp_049",
+    "exp_050",
+    "exp_051"
+  ],
+  "total_time_min": 0.9837835232416788,
+  "success_criteria": {
+    "C1_Adaptive_not_worse_than_LS": {
+      "pass": true,
+      "details": [
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    "C2_Adaptive_beats_best_static_3of4": {
+      "pass": true,
+      "count": 4
+    },
+    "C3_Learning_effect_2of4": {
+      "pass": false,
+      "count": 1
+    },
+    "C4_Frankfurt1_adaptive_under_490m": {
+      "pass": false,
+      "cep50": 496.702017546526
+    },
+    "C5_CUSUM_detection": {
+      "pass": true,
+      "note": "verified in run logs"
+    }
+  }
+}
