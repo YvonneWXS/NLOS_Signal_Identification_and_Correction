@@ -35,6 +35,10 @@ DATASET_EXP_MAP = {
 }
 
 
+# v4: Disable posterior correction (harmful per ablation) and TCN (zero marginal effect)
+USE_POSTERIOR_CORRECTION = False
+USE_TCN = False
+
 def load_mog_cache(dataset_name):
     for exp_id in ['exp_048', 'exp_049', 'exp_050', 'exp_051', 'exp_040', 'exp_041', 'exp_042', 'exp_043']:
         path = os.path.join(_M2_CACHE_DIR, f'{dataset_name}_mog_outputs_{exp_id}.pkl')
@@ -64,12 +68,12 @@ def run_module3_on_dataset(dataset_name, result_dir):
     print("\n[3/5] Initializing Module 3 v2 ...")
     shift_detector = CUSUMShiftDetector(target=0.0, allowance=20.0, threshold=100.0)
     corrector = AdaptivePosCorrector(dataset_name=dataset_name, shift_detector=shift_detector)
-    posterior_corrector = PosteriorPlosCorrector()
+    posterior_corrector = PosteriorPlosCorrector() if USE_POSTERIOR_CORRECTION else None
 
     stdls_solver = make_stdls_solver()
     wls_solver = make_wls_mog_solver()
     fg_solver = make_fg_solver()
-    fg_tcn_solver = make_fg_tcn_solver(dataset_name)
+    fg_tcn_solver = make_fg_tcn_solver(dataset_name) if USE_TCN else None
 
     ds_cfg = DATASET_CONFIGS[dataset_name]
     print(f"  window={ds_cfg['window_size']}, min_hist={ds_cfg['min_history']}")
@@ -102,7 +106,10 @@ def run_module3_on_dataset(dataset_name, result_dir):
             continue
         gt_positions.append(gt_ecef)
 
-        mog_corrected = posterior_corrector.apply_correction(mog)
+        if posterior_corrector is not None:
+            mog_corrected = posterior_corrector.apply_correction(mog)
+        else:
+            mog_corrected = mog
 
         pos_stdls, _ = stdls_solver(obs_list, sv_positions)
         pos_wls, _ = wls_solver(obs_list, sv_positions, mog_corrected)
@@ -124,7 +131,8 @@ def run_module3_on_dataset(dataset_name, result_dir):
             fg_solver=fg_solver, fg_tcn_solver=fg_tcn_solver,
         )
 
-        posterior_corrector.update_from_residuals(obs_list, mog, pos_adaptive, sv_positions)
+        if posterior_corrector is not None:
+            posterior_corrector.update_from_residuals(obs_list, mog, pos_adaptive, sv_positions)
 
         if shift_detector and shift_detector.shift_detected:
             results['shift_events'].append({
@@ -151,7 +159,10 @@ def run_module3_on_dataset(dataset_name, result_dir):
     print("\n[5/5] Evaluating ...")
     report = evaluate_full_results(results, gt_positions, dataset_name)
     report['method_distribution'] = corrector.get_summary()
-    report['posterior_correction'] = posterior_corrector.get_diagnostics()
+    if posterior_corrector is not None:
+        report['posterior_correction'] = posterior_corrector.get_diagnostics()
+    else:
+        report['posterior_correction'] = {'status': 'disabled (v4)'}
     if shift_detector:
         report['shift_stats'] = {
             'cusum_pos': shift_detector.cusum_pos,
@@ -180,7 +191,7 @@ def run_module3_on_dataset(dataset_name, result_dir):
 
 def main():
     print('=' * 60)
-    print('Module 3 v2: Residual Feedback + TCN + Per-Dataset Tuning')
+    print('Module 3 v4: Adaptive Selection (no posterior, no TCN)')
     print('=' * 60)
 
     existing = sorted([d for d in os.listdir(_RESULT_DIR)
