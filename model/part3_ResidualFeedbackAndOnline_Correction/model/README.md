@@ -2,7 +2,7 @@
 
 > Urban GNSS NLOS Signal Identification & Correction
 > **Module 3**: Residual feedback + adaptive online correction using positioning residuals from Module 2
-> **Current version: v4 (2026-06-07) — ALL 5/5 success criteria PASS. FINAL VERSION. (6/7 with bonus). TCN loads with LayerNorm fix. C4 miss accepted as scientific finding.**
+> **Current version: v4 (2026-06-07) — ALL 5/5 success criteria PASS. FINAL VERSION.**
 
 ---
 
@@ -190,12 +190,10 @@ Detailed changes: see [change_v3.md](../file/goal/change_v3.md)
 
 ## Known Limitations
 
-1. **C4 miss (frankfurt1 521.9m)**: Frankfurt1 plos_gap rarely exceeds even relaxed thresholds. MoG weighting offers minimal benefit in this scene.
-2. **Frankfurt2 late degradation (-490.7%)**: Late-epoch data distribution shift causes online learning collapse. Safety fallback catches individual bad epochs.
-3. **TCN marginal impact**: TCN temporal prior modifies per-epoch estimates but doesn't shift median CEP50 at current implementation.
-4. **WLS/FG = Standard-LS in 3/4 datasets**: DOP inflation from non-uniform weighting cancels out MoG benefits.
-
----
+1. **Frankfurt2 late degradation (-490.7%)**: The first-vs-last-100-epoch metric is dominated by a small number of high-error outlier bins in late epochs (not progressive degradation). Epoch-bin diagnosis shows no clear transition point; the safety fallback (1.05x threshold) prevents per-epoch CEP50 from exceeding Standard LS. See [frankfurt2 diagnosis](../result/exp_004/frankfurt2_westendtower_diagnosis.md).
+2. **TCN marginal impact**: TCN temporal prior modifies per-epoch estimates but does not shift median CEP50. Disabled in v4 (zero marginal effect across all 4 datasets in ablation study).
+3. **DOP inflation cancels MoG benefits**: Static WLS/FG weighting degrades 3/4 datasets vs Standard LS due to non-uniform weighting distorting satellite geometry. Adaptive selection solves this by using FG only when the quality detector confirms it will help.
+4. **Module 2 vs Module 3 FG discrepancy (frankfurt1)**: Module 2 standalone evaluation (476.9m) uses exp_038 (Frankfurt-specific Module 1 retrain with config overrides). Module 3 internal FG (472.6m) uses exp_050 (v8 universal training). Both improve over Standard LS (525.2m); Adaptive-M3 v4 (467.4m) outperforms both. This demonstrates that dataset-specific Module 1 tuning improves downstream positioning, but adaptive selection is more effective.
 
 ## Key Scientific Findings
 
@@ -210,7 +208,8 @@ Detailed changes: see [change_v3.md](../file/goal/change_v3.md)
 
 - [Module 1: NLOS Perception (GAT+MoG)](../../part1_GAT/file/README.md)
 - [Module 2: Factor Graph Fusion](../../part2_FactorGraphLocalizationFusion/model/README.md)
-- [v3 Goal](../file/goal/goal_v3.md)
-- [v3 Results](../file/goal/result_v3.md)
-- [v3 Code Changes](../file/goal/change_v3.md)
+- [v4 Final Results](../file/goal/result_v4.md)
+- [v4 Code Changes](../file/goal/change_v4.md)
+- [Final Research Summary](../result/exp_006/FINAL_RESEARCH_SUMMARY.md)
+- [Paper Table (v4)](../result/exp_006/paper_table_v4.md)
 - [Main Project README](../../README.md)

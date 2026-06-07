@@ -9,7 +9,7 @@
 | **Module 3 Adaptive v4** (this work) | **872.8 (+3.5%)** | **598.5 (+2.0%)** | **467.4 (+11.0%)** | **368.0 (+3.8%)** |
 | **Module 3 Adaptive vs LS** | +3.5% | +2.0% | +11.0% | +3.8% |
 
-*Module 2 frankfurt1 value from M2 v8 (476.9m), not M3 static FG (596.9m)
+*Module 2 FG-MoG+2A (frankfurt1 = 476.9m) uses exp_038 model with Frankfurt-specific Module 1 training configuration (LAMBDA_ENTROPY=0.005, SIGMA_GAP_TARGET=1.0). Module 3 internal FG evaluation (472.6m in v4, 596.9m in v3) uses exp_050 (v8 universal training). The difference demonstrates that dataset-specific Module 1 tuning affects downstream positioning. Module 3 Adaptive-M3 v4 (467.4m) outperforms both static approaches by adaptively selecting when to use FG weighting.
 
 ## LaTeX Table
 
