@@ -95,3 +95,84 @@ The C4/C3 tradeoff is fundamental: window=50 stabilizes online learning (+44.4%)
 ---
 
 *Generated: 2026-06-07 | Experiment: exp_004*
+
+
+---
+
+## 10. Ablation Study (exp_005) ? CRITICAL FINDING
+
+### Configurations
+
+| Config | Components |
+|--------|-----------|
+| A | Static Standard LS (baseline) |
+| B | Static WLS-MoG |
+| C | Static FG-MoG+2A |
+| D | Adaptive selection only (no CUSUM, no posterior, no TCN) |
+| E | Adaptive + CUSUM |
+| F | Full Adaptive-M3 v3 (CUSUM + posterior) |
+| G | Full + TCN |
+
+### CEP50 Results
+
+| Dataset | A: Std-LS | D: Adapt only | F: Full v3 | G: +TCN |
+|---------|:---------:|:------------:|:----------:|:-------:|
+| berlin1 | 904 | **873** (+3.4%) | 900 (+0.5%) | 900 |
+| berlin2 | 611 | **599** (+2.0%) | 593 (+3.0%) | 593 |
+| frankfurt1 | 525 | **467** (+11.0%) | 522 (+0.6%) | 522 |
+| frankfurt2 | 383 | **368** (+3.9%) | 374 (+2.3%) | 374 |
+
+### FG Selection Rate
+
+| Dataset | D: Adapt only | F: Full v3 | Suppression |
+|---------|:------------:|:----------:|:-----------:|
+| frankfurt1 | **45.7%** | 1.9% | **24x reduction** |
+| berlin2 | **39.1%** | 16.3% | 2.4x reduction |
+| frankfurt2 | **19.6%** | 8.0% | 2.5x reduction |
+| berlin1 | **10.7%** | 6.5% | 1.6x reduction |
+
+### Key Insight: Posterior Correction is the C4 Bottleneck
+
+**Without PosteriorPlosCorrector, frankfurt1 CEP50 = 467m, which PASSES C4 target (490m).**
+
+The posterior correction modifies p_los values in a way that:
+1. Reduces p_los gap, making HIGH quality detection harder
+2. Increases DOP inflation (WLS goes from 473m to 597m when posterior is active)
+3. Suppresses FG selection rate by 1.6-24x
+
+### Component Marginal Contribution
+
+| Component | berlin1 | berlin2 | frankfurt1 | frankfurt2 |
+|-----------|:-------:|:-------:|:----------:|:----------:|
+| Adaptive (A->D) | **-3.4%** | **-2.0%** | **-11.0%** | **-3.9%** |
+| + CUSUM (D->E) | 0.0% | 0.0% | 0.0% | 0.0% |
+| + Posterior (E->F) | +3.0% | -1.0% | **+10.5%** | +1.6% |
+| + TCN (F->G) | 0.0% | 0.0% | 0.0% | 0.0% |
+
+---
+
+## 11. Frankfurt1 + Frankfurt2 Diagnosis (exp_004)
+
+### Frankfurt1: No Clear Degradation
+
+- FG helps when selected: StdLS=570m -> Adaptive=475m at FG epochs
+- p_los_gap stable: early=0.786 vs late=0.760
+- Sigma ratio increase: early=3.71 vs late=4.99 (NLOS uncertainty rising)
+- No transition point detected (1.2x threshold)
+
+### Frankfurt2: Intermittent Degradation
+
+- FG helps when selected: StdLS=508m -> Adaptive=406m at FG epochs
+- Strong bin-to-bin variation: CEP50 ranges from 98m to 1244m
+- p_los_gap stable: early=0.783 vs late=0.884
+- Sigma ratio stable: early=3.07 vs late=3.10
+- No clear transition point detected
+- The -490.7% online learning is dominated by a few very bad late bins
+
+### Implication
+
+The online learning metric is misleading for frankfurt2: the "first 100 vs last 100" comparison is sensitive to outlier bins rather than representing a genuine trend. The degradation is intermittent, not progressive.
+
+---
+
+*Updated: 2026-06-07 | Experiment: exp_004 + exp_005*
