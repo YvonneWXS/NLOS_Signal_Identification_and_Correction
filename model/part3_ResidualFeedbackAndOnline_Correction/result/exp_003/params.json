@@ -1,0 +1,83 @@
+{
+  "experiment": "exp_003",
+  "version": "v3",
+  "changes": "early_classify + TCN_remapping + frankfurt2_diagnosis",
+  "datasets": [
+    "berlin1_potsdamer_platz",
+    "berlin2_gendarmenmarkt",
+    "frankfurt1_maintower",
+    "frankfurt2_westendtower"
+  ],
+  "module1_experiments": [
+    "exp_048",
+    "exp_049",
+    "exp_050",
+    "exp_051"
+  ],
+  "dataset_configs": {
+    "berlin1_potsdamer_platz": {
+      "initial_plos_gap_threshold": 0.5,
+      "initial_pdop_ratio_threshold": 1.12,
+      "window_size": 50,
+      "min_history": 15,
+      "fg_threshold": 0.7,
+      "wls_threshold": 0.6
+    },
+    "berlin2_gendarmenmarkt": {
+      "initial_plos_gap_threshold": 0.55,
+      "initial_pdop_ratio_threshold": 1.1,
+      "window_size": 50,
+      "min_history": 15,
+      "fg_threshold": 0.7,
+      "wls_threshold": 0.6
+    },
+    "frankfurt1_maintower": {
+      "initial_plos_gap_threshold": 0.45,
+      "initial_pdop_ratio_threshold": 1.08,
+      "window_size": 50,
+      "min_history": 15,
+      "fg_threshold": 0.68,
+      "wls_threshold": 0.6
+    },
+    "frankfurt2_westendtower": {
+      "initial_plos_gap_threshold": 0.5,
+      "initial_pdop_ratio_threshold": 1.1,
+      "window_size": 50,
+      "min_history": 20,
+      "fg_threshold": 0.75,
+      "wls_threshold": 0.65
+    }
+  },
+  "total_time_min": 0.5978920261065165,
+  "success_criteria": {
+    "C1_Adaptive_not_worse_than_LS": {
+      "pass": true,
+      "details": [
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    "C2_Adaptive_beats_best_static_3of4": {
+      "pass": true,
+      "count": 3
+    },
+    "C3_Learning_effect_2of4": {
+      "pass": true,
+      "count": 2
+    },
+    "C4_Frankfurt1_adaptive_under_490m": {
+      "pass": false,
+      "cep50": 520.159739584316
+    },
+    "C5_CUSUM_detection": {
+      "pass": true,
+      "note": "verified in run logs"
+    },
+    "BONUS_TCN_improves_3of4": {
+      "pass": false,
+      "count": 1
+    }
+  }
+}

@@ -44,8 +44,8 @@ DATASET_CONFIGS = {
         'initial_plos_gap_threshold': 0.45,
         'initial_pdop_ratio_threshold': 1.08,
         'window_size': 50,
-        'min_history': 20,
-        'fg_threshold': 0.75,
+        'min_history': 15,  # v3: reduced for frankfurt1, UNCERTAIN allows early use
+        'fg_threshold': 0.68,  # v3: relaxed from 0.75 for frankfurt1
         'wls_threshold': 0.65,
     },
     'frankfurt2_westendtower': {
@@ -89,7 +89,7 @@ class ResidualInnovationTracker:
     def get_scene_quality(self):
         """Part 2: Stricter thresholds for HIGH_QUALITY classification."""
         if len(self.innovation_history) < self.min_history:
-            return 'UNCERTAIN', 0.0
+            return 'UNCERTAIN', 0.5  # v3: allow detector-based early classify
         recent = self.innovation_history[-self.min_history:]
         mean_innovation = np.mean(recent)
         improvement_fraction = float(np.mean([x < 0 for x in recent]))
@@ -240,8 +240,23 @@ class AdaptivePosCorrector:
             quality, score, features = self.detector.classify_epoch(
                 mog_outputs, sv_positions, pos_stdls)
 
+        # v3: Combine detector and tracker signals (Part 1 fix)
+        tracker_quality, tracker_conf = self.tracker.get_scene_quality()
+        if tracker_quality == 'UNCERTAIN':
+            final_quality = quality
+            final_score = score * 0.8  # slight confidence reduction
+        elif tracker_quality == 'HIGH_QUALITY' and quality == 'HIGH':
+            final_quality = 'HIGH'
+            final_score = min(0.95, score + 0.1)
+        elif tracker_quality == 'LOW_QUALITY' and quality == 'LOW':
+            final_quality = 'LOW'
+            final_score = 0.1
+        else:
+            final_quality = 'LOW' if tracker_quality == 'LOW_QUALITY' else quality
+            final_score = score * 0.7
+
         # Method selection with per-dataset thresholds (Part 4)
-        if quality == 'HIGH' and score >= self.fg_threshold:
+        if final_quality == 'HIGH' and final_score >= self.fg_threshold:
             # Try TCN-enhanced FG first, fallback to plain FG
             method = 'FG-MoG+TCN'
             if fg_tcn_solver is not None:
@@ -261,7 +276,7 @@ class AdaptivePosCorrector:
                 except Exception:
                     pos_sel, clk_sel = mog_solver(obs_list, sv_positions, mog_outputs)
                     method = 'WLS-MoG'
-        elif quality == 'HIGH' and score >= self.wls_threshold:
+        elif final_quality == 'HIGH' and final_score >= self.wls_threshold:
             pos_sel, clk_sel = mog_solver(obs_list, sv_positions, mog_outputs)
             method = 'WLS-MoG'
         else:
@@ -362,6 +377,59 @@ def make_fg_solver():
 # TCN-enhanced FG solver (Part 3)
 # ============================================================================
 
+def load_tcn_with_key_remapping(model_path, device="cpu"):
+    """Load TCN model handling old (3-layer flat keys) and new (4-layer Sequential) architectures.
+
+    The saved TCN state_dict has keys like:
+      input_proj.weight, conv1.weight, conv2.weight, conv3.weight, out.weight
+    """
+    import torch
+    import torch.nn as nn
+
+    state_dict = torch.load(model_path, map_location=device, weights_only=True)
+    keys = list(state_dict.keys())
+
+    if "conv1.weight" in keys:
+        input_dim = state_dict["input_proj.weight"].shape[1]
+        hidden_dim = state_dict["input_proj.weight"].shape[0]
+        output_dim = state_dict["out.weight"].shape[0]
+
+        class SimpleTCN_v1(nn.Module):
+            def __init__(self, input_dim, hidden_dim, output_dim):
+                super().__init__()
+                self.input_proj = nn.Linear(input_dim, hidden_dim)
+                self.conv1 = nn.Conv1d(hidden_dim, hidden_dim, 3, padding=1)
+                self.ln1 = nn.LayerNorm(hidden_dim)
+                self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, 3, padding=2, dilation=2)
+                self.ln2 = nn.LayerNorm(hidden_dim)
+                self.conv3 = nn.Conv1d(hidden_dim, hidden_dim, 3, padding=4, dilation=4)
+                self.ln3 = nn.LayerNorm(hidden_dim)
+                self.out = nn.Linear(hidden_dim, output_dim)
+
+            def forward(self, x):
+                x = torch.relu(self.input_proj(x))
+                x = x.transpose(1, 2)
+                x = torch.relu(self.ln1(self.conv1(x).transpose(1, 2)).transpose(1, 2))
+                x = torch.relu(self.ln2(self.conv2(x).transpose(1, 2)).transpose(1, 2))
+                x = torch.relu(self.ln3(self.conv3(x).transpose(1, 2)).transpose(1, 2))
+                x = x.transpose(1, 2)
+                x = torch.sigmoid(self.out(x[:, -1, :]))
+                return x
+
+        model = SimpleTCN_v1(input_dim, hidden_dim, output_dim)
+        model.load_state_dict(state_dict)
+        model.eval()
+        print(f"    TCN loaded (v1 old arch, input={input_dim}, hidden={hidden_dim}, output={output_dim})")
+        return model
+    else:
+        from fusion.motion_geometry_predictor import MotionGeometryPredictor
+        model = MotionGeometryPredictor()
+        model.model.load_state_dict(state_dict)
+        model.eval()
+        print("    TCN loaded (new arch via MotionGeometryPredictor)")
+        return model
+
+
 def make_fg_tcn_solver(dataset_name):
     """Returns FG-MoG solver with TCN temporal prior, or None if TCN unavailable."""
     import torch
@@ -373,11 +441,7 @@ def make_fg_tcn_solver(dataset_name):
         return None
 
     try:
-        from fusion.motion_geometry_predictor import MotionGeometryPredictor
-        tcn_model = MotionGeometryPredictor()
-        tcn_model.model.load_state_dict(torch.load(tcn_path, map_location='cpu', weights_only=True))
-        tcn_model.eval()
-        print(f'    TCN model loaded: {os.path.basename(tcn_path)}')
+        tcn_model = load_tcn_with_key_remapping(tcn_path)
     except Exception as e:
         print(f'    TCN loading failed: {e}, FG-TCN disabled')
         return None
