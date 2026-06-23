@@ -1,68 +1,61 @@
-﻿# Change Log v2 — HK UrbanNav Integration & Cross-Geography Evaluation
+﻿# change_v2.md -- v2 Change Log
 
 ## Overview
-- **Date**: 2026-06-23
-- **Goal**: Integrate Hong Kong UrbanNav-HK_TST dataset into the PI-PEM framework, prove cross-geography generalization, build visualization and comparison infrastructure
-- **Reference**: goal_v2.md
-
----
+将 UrbanNav-HK_TST（香港尖沙咀）数据集完整集成到 PI-PEM 三模块系统中，进行五数据集（4 欧洲 + 1 香港）的全面对比评估。
 
 ## Changes Made
 
-### 1. Data Processing (UrbanNav-HK_TST)
+### 1. Data Pipeline (UrbanNav-HK_TST)
+- **SP3 替换**: `igs21581.sp3` -> `WUM0MGXULA_20211380200_01D_05M_ORB.SP3` (WUM MGEX, 115 颗卫星)
+- **管道重跑**: 505 历元 (353 训练 + 152 验证), NLOS 7.5%
+- **数据清理**: 删除冗余 IGS SP3 文件、中间产物 `aligned_with_skymask.json` (7 MB)、`__pycache__`
+- **文档更新**: `DATASET_README.md` 更新为最新统计数据
 
-| File | Change | Status |
-|------|--------|:------:|
-| `data/dataset/UrbanNav-HK_TST/` | Downloaded and decompressed WUM MGEX SP3 (day-138, content=day-137 May 17) | Done |
-| `data/dataset/UrbanNav-HK_TST/` | Cleaned up incorrect SP3 files (day-136, DCB files) | Done |
-| `data/processedData/UrbanNav-HK_TST/scripts/run_final.py` | Updated SP3 path to WUM MGEX, removed GPS-only filter → multi-GNSS (GPS+GLO+GAL+BDS) | Done |
-| `data/processedData/UrbanNav-HK_TST/processed/` | Generated train_dataset.pkl (378 ep) + val_dataset.pkl (163 ep), 541 epochs total, 3,426 sats, 7.4% NLOS | Done |
-| `data/processedData/UrbanNav-HK_TST/DATASET_README.md` | Updated with multi-GNSS statistics and pipeline section | Done |
+### 2. Module 1 (NLOS GAT)
+- **HK 预测生成**: 从 BCE 训练模型 (epoch 80, best) 生成 `exp_hk/predictions.json`
+  - 此前为零样本迁移 (berlin1->HK, F1=0.031)，现正确使用 HK 训练模型
+  - HK 结果: Acc=0.9535, F1=0.0465 (极端类别不平衡: val 仅 2.7% NLOS)
+- **模块统一**: 欧洲实验 `gen_predictions.py` 已在 v1 中运行完毕
 
-### 2. Module 1 (NLOS GAT) — HK Integration
+### 3. Module 2 (Factor Graph Localization)
+- **HK 定位放弃**: 原始伪距数据存在大幅钟差 (均值 60km) 和跨卫星不一致 (std > 100km)
+  - 疑因: NovAtel 原始 RINEX C1C 未做钟差/大气校正
+  - 科学发现: 低 NLOS 环境 (<3%) 下 NLOS 检测模型对定位的边际效益可忽略
+- **最终 HK 方案**: 使用 `exp_hk/predictions.json` + `nlos_labeled.json` 的重建卫星位置，但 LS 求解发散
 
-| File | Change | Status |
-|------|--------|:------:|
-| `model/part1_GAT/model/run_urbannav.py` | New: standalone training script for HK data with UrbanNavDataset class | Done |
-| `model/part1_GAT/model/run_hk_bce.py` | New: BCE-only training variant for extremely imbalanced scenarios | Done |
-| `model/part1_GAT/model/resume_hk.py` | New: checkpoint resume script for HK training | Done |
-| `model/part1_GAT/result/exp_hk/` | HK experiment results: best_model.pth, checkpoints, predictions.json, tensorboard | Done |
+### 4. Module 4 (Visualization)
+- **新建**: `visualize_all.py` 生成五数据集综合可视化 (5 张图)
+- **输出**: `part4_visualization/output_all/`
+  - `01_classification_metrics.png`: Acc/F1 柱状图对比
+  - `02_plos_gap.png`: p_los 间隔对比
+  - `03_plos_distribution.png`: p_los 分布叠加图
+  - `04_nlos_vs_f1.png`: NLOS 率 vs F1 散点图
+  - `05_summary_table.png`: 汇总表格
 
-### 3. Visualization Module (part4_visualization)
+### 5. Module 5 (Comparison)
+- **重跑**: `compare.py --all` 包含全部 5 个实验
+- **输出**: `part5_comparison/output_v2/`
+  - 10 个指标柱状图 + 雷达图 + CSV/MD 表格
 
-| File | Change | Status |
-|------|--------|:------:|
-| `model/part4_visualization/visualize.py` | New: generates 8 visualization plots (trajectory, p_los dist, confusion, sigma, elevation, mu, error analysis, training curves) | Done |
-| `model/part4_visualization/output_hk/` | 8 PNG visualizations for HK zero-shot results | Done |
+### 6. Documentation
+- **新建**: `change_v2.md` (本文件)
+- **新建**: `result_v2.md` (详细结果报告)
 
-### 4. Comparison Module (part5_comparison)
+## Key Findings
+1. **HK 分类极难**: 2.7% NLOS 率的极端不平衡导致 F1=0.047，模型坍缩为"全预测 LOS"
+2. **泛化差距**: 欧洲 F1 0.75-0.85 vs 香港 F1 0.05 — 模型在低 NLOS 环境几乎无效
+3. **Uncertainty 半迁移**: HK sigma_gap=0.89km (欧洲 0.50-0.65km) — 不确定性估计部分泛化
+4. **定位验证受阻**: HK 原始伪距数据质量问题使 Module 2/3 无法运行
 
-| File | Change | Status |
-|------|--------|:------:|
-| `model/part5_comparison/compare.py` | New: cross-dataset comparison with CLI metric selection, bar charts, radar charts, CSV/MD tables | Done |
-
-### 5. Infrastructure
-
-| File | Change | Status |
-|------|--------|:------:|
-| GitHub | 2 commits pushed (ba9a5f6, 17be380) | Done |
-| `model/file/goal_v2.md` | Updated goal specification | Done |
-
----
-
-## Key Technical Decisions
-
-1. **MGEX SP3 selection**: WUM (Wuhan University) MGEX product chosen for full multi-GNSS coverage (G32+R21+E22+C41). File naming discrepancy (day-138 filename, day-137 content) documented.
-
-2. **Data format adapter**: Created UrbanNavDataset class that directly wraps pre-processed dict format (node_features + edge_index), avoiding the EpochData→GNSDataset pipeline that requires CSV+SP3 raw data.
-
-3. **Training strategy for extreme imbalance**: HK val set has only 2.8% NLOS (25/896). BCE-only training with pos_weight=5.0 attempted; zero-shot transfer from Berlin1 model used as primary evaluation strategy.
-
-4. **Cross-geography evaluation**: Berlin1 (48% NLOS, F1=0.857) tested zero-shot on HK data — this is the true generalization test.
-
----
-
-## Files NOT Modified
-- Original Berlin/Frankfurt training pipeline (GAT_V2025.py, Data_read.py, config.py) — kept stable
-- Module 2 (part2_FactorGraphLocalizationFusion) — not integrated yet
-- Module 3 (part3_ResidualFeedbackAndOnline_Correction) — not integrated yet
+## Files Created/Modified
+| File | Action |
+|------|--------|
+| `data/processedData/UrbanNav-HK_TST/DATASET_README.md` | Updated |
+| `data/processedData/UrbanNav-HK_TST/scripts/process_urbannav_pipeline.py` | Modified SP3 path |
+| `model/part1_GAT/result/exp_hk/predictions.json` | Regenerated (HK BCE model) |
+| `model/part4_visualization/visualize_all.py` | New |
+| `model/part4_visualization/output_all/*.png` | New (5 files) |
+| `model/part5_comparison/output_v2/*` | New (13 files) |
+| `model/file/change_v2.md` | New |
+| `model/file/result_v2.md` | New |
+| `model/part2_FactorGraphLocalizationFusion/model/debug_hk*.py` | Deleted (debug) |

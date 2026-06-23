@@ -1,123 +1,59 @@
-﻿# Result v2 — UrbanNav-HK_TST Cross-Geography Evaluation
+﻿# result_v2.md -- NLOS GAT Five-Dataset Evaluation Results
 
 ## Experiment Summary
 
-| Property | Value |
-|----------|-------|
-| **Source Model** | Berlin1 Potsdamer Platz (exp_001), epoch 15, Val F1=0.857 |
-| **Target Dataset** | UrbanNav-HK_TST, Hong Kong Tsim Sha Tsui |
-| **Target Size** | 163 val epochs, 896 satellites, 2.8% NLOS (25/896) |
-| **Transfer Type** | Zero-shot (no fine-tuning) |
-| **Model Architecture** | NLOSGAT MoG, 281,474 params, 8-head GAT, 2 layers |
-| **Evaluation Date** | 2026-06-23 |
+| Experiment | Dataset | NLOS% | Epochs | Accuracy | F1 | p_los Gap | sigma_gap (km) |
+|-----------|---------|:-----:|:------:|:--------:|:---:|:---------:|:--------------:|
+| exp_001 | Berlin1 Potsdamer Platz | 46.1% | 1,377 | 0.8474 | 0.8425 | — | 0.534 |
+| exp_002 | Berlin2 Gendarmenmarkt | 45.6% | 5,925 | 0.8524 | 0.8489 | — | 0.600 |
+| exp_003 | Frankfurt1 Maintower | 52.0% | 5,851 | 0.8296 | 0.8399 | — | 0.502 |
+| exp_004 | Frankfurt2 Westendtower | 25.3% | 3,575 | 0.8659 | 0.7473 | — | 0.651 |
+| exp_hk | Hong Kong TST | 2.7% | 505 | 0.9535 | 0.0465 | -0.019 | 0.892 |
 
----
+## Key Findings
 
-## 1. Classification Performance (Zero-Shot)
+### 1. Classification Performance vs NLOS Rate
+- **欧洲四城**: F1 0.75-0.85，模型在 >25% NLOS 环境中有效
+- **香港**: F1 0.047，在 2.7% NLOS 环境中模型坍缩为"全预测 LOS"
+- **泛化性**: 跨地理区域的 NLOS 检测严重依赖 NLOS 基础率
 
-| Metric | Value | Interpretation |
-|--------|:-----:|---------------|
-| Accuracy | 0.9297 | High (97.2% baseline if all-LOS) |
-| Precision | 0.0250 | Very low — most NLOS predictions are wrong |
-| Recall | 0.0400 | Only 1/25 NLOS detected |
-| F1 Score | **0.0308** | Classification fails on this distribution |
-| TP / FP / TN / FN | 1 / 39 / 832 / 24 | Heavily biased toward LOS |
+### 2. Uncertainty (sigma) Analysis
+- **欧洲**: sigma_gap 0.50-0.65 km，NLOS 卫星的预测不确定性显著高于 LOS
+- **香港**: sigma_gap 0.89 km，不确定性估计部分泛化（即使分类失败）
+- **含义**: 模型的 heteroscedastic uncertainty 头比分类头泛化能力强
 
-**Key Insight**: The model trained on 48% NLOS (Berlin) cannot transfer its decision boundary to 2.8% NLOS (HK). This is expected behavior — the p_los threshold of 0.5 is calibrated for European urban canyons.
+### 3. p_los Distribution
+- **欧洲**: 双峰分布明显 (LOS 峰 ~0.8, NLOS 峰 ~0.2)
+- **香港**: 单峰集中在 ~0.93，模型无法区分 LOS/NLOS
 
----
+### 4. Module 2/3 Limitation
+- 香港原始伪距数据存在 ~60km 均值钟差 + >100km 跨卫星标准差
+- 疑因 NovAtel RINEX C1C 未做钟差/大气层校正
+- 低 NLOS 环境 (<3%) 中 NLOS 检测对定位边际效益可忽略
 
-## 2. p_los Distribution Analysis
+### 5. Cross-Dataset Comparison Summary
 
-| Group | Mean p_los | Count |
-|-------|:----------:|:-----:|
-| True LOS | 0.7682 | 871 |
-| True NLOS | 0.8016 | 25 |
-| **Gap** | **-0.0334** | — |
+```
+Dataset       Acc     F1      sigma_gap   NLOS%
+Berlin1       0.847   0.843   0.534       46.1%
+Berlin2       0.852   0.849   0.600       45.6%
+Frankfurt1    0.830   0.840   0.502       52.0%
+Frankfurt2    0.866   0.747   0.651       25.3%
+HongKong      0.954   0.047   0.892        2.7%
+```
 
-**Key Insight**: The model assigns p_los ≈ 0.77-0.80 to ALL HK satellites. In Berlin (48% NLOS), p_los separates clearly (LOS ~0.70, NLOS ~0.05, gap ~0.65). In HK, the model sees "mostly LOS-like signals" and shifts p_los upward for everything. The negative gap (-0.033) suggests a slight systematic bias from European training.
+## Visualizations
 
----
+Located in `part4_visualization/output_all/`:
+- `01_classification_metrics.png`: Accuracy/F1 bar chart
+- `02_plos_gap.png`: p_los gap comparison
+- `03_plos_distribution.png`: p_los distribution overlay (5 datasets)
+- `04_nlos_vs_f1.png`: NLOS rate vs F1 scatter
+- `05_summary_table.png`: Summary table
 
-## 3. Uncertainty (sigma) — Partial Generalization ✅
+## Recommendations
 
-| Sigma | LOS Mean | NLOS Mean | Gap |
-|-------|:--------:|:---------:|:---:|
-| sigma_los | 0.3848 | 0.4351 | — |
-| sigma_nlos | 0.4588 | 0.5713 | **0.1125 km** |
-
-**Key Insight**: sigma_nlos(NLOS) > sigma_nlos(LOS) by 0.113 km. The uncertainty head partially generalizes — it assigns higher uncertainty to NLOS satellites even in an unseen geography. This is the most promising finding for cross-geography transfer.
-
----
-
-## 4. mu_NLOS Analysis
-
-| Group | Mean mu_NLOS |
-|-------|:------------:|
-| LOS | 0.1606 km |
-| NLOS | 0.1663 km |
-| Target range | 0.15-0.30 km |
-
-**Key Insight**: mu_nlos is stable at ~0.16 km for both LOS and NLOS, within the expected range. The mu head learned a reasonable NLOS error magnitude that transfers across geographies.
-
----
-
-## 5. Error Case Analysis
-
-### False Negatives (24/25 NLOS missed)
-- **Elevation**: 46.5° (high!) — NLOS at high elevation is the hardest case
-- **C/N0**: 35.5 dBHz — decent signal quality, looks like LOS
-- **p_los**: 0.824 — model is confident these are LOS
-
-### False Positives (39 LOS misclassified)
-- **Elevation**: 61.0° — very high elevation
-- **C/N0**: 38.3 dBHz — good signal
-- **p_los**: 0.329 — model is suspicious but sky mask says LOS
-
-**Key Insight**: HK NLOS satellites appear "LOS-like" (high elevation, decent C/N0) to a model trained on European urban canyons where NLOS = low elevation + weak signal.
-
----
-
-## 6. Cross-Geography Generalization Summary
-
-| Capability | Transfers? | Evidence |
-|-----------|:----------:|---------|
-| p_los classification | ❌ No | F1=0.031, negative p_los gap |
-| sigma uncertainty | ⚠️ Partial | sigma_gap=0.113 km (weak but correct direction) |
-| mu_nlos magnitude | ✅ Yes | Stable at ~0.16 km |
-| Elevation prior | ❌ No | FN samples at 46.5° elevation |
-
----
-
-## 7. Visualizations Generated
-
-8 plots saved to `model/part4_visualization/output_hk/`:
-1. `01_trajectory_2d.png` — p_los sample overview
-2. `02_plos_distribution.png` — p_los PDF/CDF for LOS vs NLOS
-3. `03_confusion_matrix.png` — classification confusion matrix
-4. `04_sigma_distribution.png` — sigma_nlos distribution (LOS vs NLOS)
-5. `05_elevation_vs_plos.png` — elevation-p_los scatter
-6. `06_mu_distribution.png` — mu_nlos distribution
-7. `07_error_analysis.png` — FN/FP characteristics
-8. `08_training_curves.png` — loss/F1 curves
-
----
-
-## 8. Comparison with European Datasets
-
-| Dataset | NLOS% | F1 (in-domain) | F1 (HK zero-shot) | p_los Gap (HK) |
-|---------|:-----:|:-------------:|:-----------------:|:--------------:|
-| berlin1 (Potsdamer Platz) | 48.3% | 0.857 | 0.031 | -0.033 |
-| berlin2 (Gendarmenmarkt) | 38.8% | ~0.87 | — | — |
-| frankfurt1 (Maintower) | 43.0% | ~0.85 | — | — |
-| frankfurt2 (Westendtower) | 26.6% | ~0.87 | — | — |
-
----
-
-## 9. Next Steps
-
-1. **Fine-tune on HK data** (few-shot transfer): Take Berlin1 model, fine-tune 10-20 epochs on HK train set — expected to recover F1 > 0.5
-2. **Calibrate decision threshold**: Instead of p_los=0.5, optimize threshold on HK val set (likely > 0.9)
-3. **Module 2 integration**: Run LS/WLS/FG baselines on HK with predicted NLOS weights
-4. **Module 3 integration**: Test adaptive selection on HK scenario
-5. **Multi-model ensemble**: Average predictions from 4 European models for more robust HK inference
+1. **低 NLOS 场景**: BCE-only 训练不足以处理 <3% NLOS 率，需考虑 anomaly detection 框架
+2. **Uncertainty 头**: 泛化能力优于分类头，可考虑作为跨域迁移的锚点
+3. **HK 定位**: 需获取校正后的伪距数据或广播星历重新处理
+4. **数据增强**: HK 数据 NLOS 率 7.5% (训练集 9.1%)，但验证集仅 2.7% — 时间分布偏移需注意

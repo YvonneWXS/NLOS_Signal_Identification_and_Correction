@@ -48,13 +48,18 @@ def extract_metric(data, metric_key):
     ds_stats = data.get("dataset_stats", {})
 
     if metric_key == "mu_nlos_nlos":
-        mu = np.array(data.get("mu_nlos", [0]))
+        mu = np.array(data.get("mu_nlos", []))
         labels = np.array(data.get("labels", []))
+        if len(mu) == 0 or len(labels) == 0 or len(mu) != len(labels):
+            return 0.0
         return float(mu[labels == 1].mean()) if (labels == 1).any() else 0.0
 
     if metric_key == "nlos_pct":
-        labels = np.array(data.get("labels", []))
-        return float(100 * labels.mean()) if len(labels) > 0 else 0.0
+        ds_stats = data.get("dataset_stats", {})
+        return ds_stats.get("nlos_pct", 0.0)
+    
+    if metric_key == "sigma_gap":
+        return metrics.get("sigma_gap", metrics.get("plos_gap", 0.0))
 
     if metric_key in metrics:
         return metrics[metric_key]
