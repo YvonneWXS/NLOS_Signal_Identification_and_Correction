@@ -86,13 +86,13 @@ class Config:
     SIGMA_NLOS_CLAMP_LOG_MAX = 2.5
     SIGMA_LOS_MAX = 7.5  # Fix 6B: match exp(clamp(log_sigma_los, max=2.0))
     SIGMA_HEAD_GRAD_CLIP = 0.5
-    LAMBDA_MU_REG = 0.05  # [v7] reduced: 0.30->0.05 (weaken L2 anchor, let direction loss steer)
+    LAMBDA_MU_REG = 0.20  # [v8] restore: 0.05->0.20 (re-anchor magnitude, between v5 0.30 and v7 0.05)
     LAMBDA_MU_WARMUP_REG = 0.05  # mu supervision weight during pure BCE warmup
     # ========== [v7] Mu Direction Constraint ==========
     LAMBDA_MU_DIRECTION = 1.0  # weight for MuDirectionLoss
     MU_DIRECTION_LOS_TARGET = 0.05  # km: mu_nlos[LOS] should not exceed this
     MU_DIRECTION_MARGIN = 0.10  # km: mu_nlos[NLOS] must exceed mu_nlos[LOS] by this margin
-    MU_NLOS_TARGET = 0.5  # [v5] increased for supervised mu  # L2 anchor for mu_nlos (km), shared across all phases
+    MU_NLOS_TARGET = 0.30  # [v8] anchor NLOS mu around empirical 166-236m (was 0.50 in v5, 0.50 in v7)
     LAMBDA_BCE_IN_NLL = 1.5  # Fix 3: BCE weight in pure NLL phase (3:1 over NLL)
     LAMBDA_BCE_FINAL = 0.6  # Fix 6C: minimum BCE weight at end of training
     P_LOS_LR_MULTIPLIER = 6  # Fix 6C: reduced from 10x (5e-4 -> 3e-4)
