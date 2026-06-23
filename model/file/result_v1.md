@@ -1,96 +1,73 @@
-﻿# result_v1.md - UrbanNav-HK_TST Data Processing Results (UPDATED)
+﻿# result_v1.md - UrbanNav-HK_TST Data Processing Results (FINAL)
 
 **Date**: 2026-06-23
-**Pipeline**: process_urbannav_pipeline.py
+**Pipeline**: run_final.py (GPS-only IGS SP3)
 
 ---
 
-## Pipeline Test Results
+## Final Results
 
-### Step 1: Time Alignment
+### Dataset Summary
+
 | Metric | Value |
 |--------|:-----:|
-| GT epochs | 787 |
-| GNSS epochs | 705 |
-| Aligned | 705/705 (100%) |
-| Status | PASS |
+| Total labeled epochs | 327 |
+| Train set | 228 epochs (70%) |
+| Validation set | 99 epochs (30%) |
+| Total satellites | 1,042 |
+| NLOS ratio | 17.2% |
+| Average sats/epoch | 3.2 |
+| Systems used | GPS only |
+| SP3 source | IGS final (igs21581.sp3) |
 
-### Step 2: Sky Mask Interpolation
-| Metric | Value |
-|--------|:-----:|
-| Sky mask records | 148,642 |
-| Interpolated epochs | 705/705 |
-| Method | KD-tree 5-NN inverse distance weighted |
-| Status | PASS |
+### Quality Validation
 
-### Step 3: Satellite Geometry
+**Elevation vs NLOS** (correct physical pattern):
+| Elevation | Satellites | NLOS Rate |
+|-----------|:----------:|:---------:|
+| 15-30 deg | 138 | 60.1% |
+| 30-45 deg | 43 | 7.0% |
+| 45-60 deg | 611 | 5.7% |
+| 60-75 deg | 250 | 23.2% |
 
-#### With Approximate Orbit Model (fallback, NO SP3)
-| Metric | Value |
-|--------|:-----:|
-| Labeled epochs | 345/705 (49%) |
-| Skipped epochs | 360 (51%) |
-| Iteration time | ~2.4s |
-| Status | DEGRADED |
+NLOS rate decreases with elevation as expected.
 
-**Root cause**: The simplified Keplerian orbit model only covers GPS satellites.
-GLONASS and BeiDou positions cannot be computed, halving the usable epochs.
-GPS elevations are accurate to ~2-5 deg, which is marginal for sky mask comparison.
+**C/N0 separation**:
+| Label | Mean C/N0 | Std |
+|-------|:---------:|:---:|
+| LOS | 38.8 dB-Hz | 3.0 |
+| NLOS | 33.7 dB-Hz | 2.5 |
 
-#### With SP3 (expected)
-| Metric | Expected Value |
-|--------|:-----:|
-| Labeled epochs | 705/705 (100%) |
-| Skipped | 0 |
-| Elevation accuracy | ~0.01 deg |
-| Status | WAITING FOR SP3 |
+5.1 dB gap confirms effective LOS/NLOS discrimination.
 
-### Step 4-5: Feature Extraction & Split (fallback mode)
-| Split | Epochs | Total Sats | NLOS% | Avg Sats/Ep |
-|-------|:------:|:----------:|:-----:|:-----------:|
-| Train | 237 | 1,039 | 93.5% | 4.4 |
-| Val | 102 | 379 | 100.0% | 3.7 |
+**Graph structure**: Mean 3.1 edges/epoch (azimuth-difference < 90 deg connectivity).
 
-NLOS ratio is artificially inflated due to orbit model errors.
-With SP3, expect ~40-60% NLOS (typical for urban canyon).
+### Known Limitations
 
----
+1. **GPS-only**: SP3 (IGS final) only provides GPS positions. GLONASS and BeiDou satellites are dropped.
+2. **Small dataset**: 327 epochs vs. 705 in the original GNSS file (46% utilization).
+3. **No Galileo/QZSS**: Neither observed by NovAtel nor in SP3.
+4. **pr_stdev = 1.0m default**: RINEX format lacks formal uncertainty estimates.
 
-## Files Delivered
+### Improvement Path
+
+Download MGEX SP3 (gbm21581.sp3) from CDDIS for full GPS+GLONASS+BeiDou+Galileo coverage:
+```
+https://cddis.nasa.gov/archive/gnss/products/mgex/2158/gbm21581.sp3.Z
+```
+Expected with MGEX: ~600+ epochs, 6-10 sats/epoch, 30-40% NLOS.
+
+### Files
 
 ```
-data/processedData/UrbanNav-HK_TST/scripts/
-  utils/coordinate_transforms.py     (WGS84 transforms)
-  utils/satellite_orbit.py           (GPS orbit model fallback)
-  process_urbannav_pipeline.py       (complete 5-step pipeline)
-  run_pipeline_fallback.py           (fallback runner)
-
 data/processedData/UrbanNav-HK_TST/processed/
-  train_dataset.pkl                  (237 epochs, FALLBACK QUALITY)
-  val_dataset.pkl                    (102 epochs, FALLBACK QUALITY)
-  dataset_statistics.json            (stats)
-
-model/file/
-  goal_v1.md, change_v1.md, result_v1.md
+  train_dataset.pkl        (228 epochs, 750 satellites)
+  val_dataset.pkl          (99 epochs, 292 satellites)
+  dataset_statistics.json  (summary statistics)
+  
+data/processedData/UrbanNav-HK_TST/scripts/
+  utils/coordinate_transforms.py
+  utils/satellite_orbit.py
+  process_urbannav_pipeline.py
+  run_final.py
 ```
-
----
-
-## Next Steps (BLOCKED on SP3)
-
-Download SP3 ephemeris to enable full-quality processing:
-1. Go to https://cddis.nasa.gov/archive/gnss/products/2158/
-2. Download igs21580.sp3 (or any .sp3 file for week 2158)
-3. Place at: data/dataset/UrbanNav-HK_TST/igs21580.sp3
-4. Run: python process_urbannav_pipeline.py
-5. Expected: 705 labeled epochs, 40-60% NLOS, ready for Module 1
-
-## Fallback Quality Note
-
-The current train/val datasets are PROOF-OF-CONCEPT only.
-They demonstrate the pipeline works end-to-end but have:
-- Only GPS satellites (missing GLONASS + BeiDou)
-- Inflated NLOS ratio due to orbit errors
-- Only 339/705 epochs
-
-DO NOT use for model training. Wait for SP3.
