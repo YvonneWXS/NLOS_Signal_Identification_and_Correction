@@ -38,3 +38,5 @@ _git_backup/
 _*.py
 *.ascii
 *.backup
+
+model_2/
