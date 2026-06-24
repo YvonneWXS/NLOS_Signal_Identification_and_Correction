@@ -1,4 +1,4 @@
-ï»¿# module2_localization/snr_weighted.py â€” SNR-weighted Least Squares
+# module2_localization/snr_weighted.py ¡ª SNR-weighted Least Squares
 import numpy as np
 from .base import LocalizationBase
 from .factory import LocalizationFactory
@@ -15,8 +15,8 @@ class SNRWeightedLS(LocalizationBase):
         N = len(obs)
         
         weights = np.ones(N)
-        if additional_info and "snr" in additional_info:
-            snr_db = np.asarray(additional_info["snr"]).flatten()[:N]
+        if additional_info and ("snr" in additional_info or "cno" in additional_info):
+            snr_db = np.asarray(additional_info.get("snr", additional_info.get("cno"))).flatten()[:N]
             snr_linear = 10 ** (snr_db / 10.0)
             weights = snr_linear / np.max(snr_linear)
         
