@@ -1,20 +1,20 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Module 1: NLOS Perception & Error Modeling — CLI entry point
+Module 1: NLOS Perception & Error Modeling -- CLI entry point
 ============================================================
 Usage:
-  python -m module1_nlos.run --dataset berlin1_potsdamer_platz --mode train
-  python -m module1_nlos.run --dataset berlin1_potsdamer_platz --mode inference --checkpoint path/to/best_model.pth
+  python run.py --dataset berlin1_potsdamer_platz --mode train
+  python run.py --dataset berlin1_potsdamer_platz --mode inference --checkpoint path/to/best_model.pth
 """
 import os
 import sys
 import time
 import argparse
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from config import get_config
-from Data_read import load_and_process_dataset, print_data_statistics
+# Ensure module1_nlos and common are importable
+_here = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _here)
+sys.path.insert(0, os.path.join(_here, "..", "common"))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Module 1: NLOS GAT training/inference")
@@ -24,6 +24,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path for inference")
     parser.add_argument("--epochs", type=int, default=None, help="Override NUM_EPOCHS")
     args = parser.parse_args()
+
+    from config import get_config
+    from Data_read import load_and_process_dataset, print_data_statistics
 
     config = get_config(DATASETS=[args.dataset])
     config.ensure_dirs()
@@ -48,8 +51,8 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("Step 2: Running inference")
         print("=" * 60)
-        from GAT_V2026 import main
         if args.checkpoint:
+            from GAT_V2026 import main
             main(dataset_name=args.dataset, exp_name=args.exp_name, resume_from=args.checkpoint, num_epochs=0)
         else:
             print("ERROR: --checkpoint required for inference mode")
