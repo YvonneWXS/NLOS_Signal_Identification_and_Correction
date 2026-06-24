@@ -1,12 +1,13 @@
+# -*- coding: utf-8 -*-
 """
-Full training script — processes dataset and runs training epochs
+Full training script -- processes dataset and runs training epochs
 Usage:
-  Single:  python run_full_training.py --dataset berlin1_potsdamer_platz
+  Single:  python run.py --dataset berlin1_potsdamer_platz
   Parallel (4 terminals):
-    python run_full_training.py --dataset berlin1_potsdamer_platz
-    python run_full_training.py --dataset berlin2_gendarmenmarkt
-    python run_full_training.py --dataset frankfurt1_maintower
-    python run_full_training.py --dataset frankfurt2_westendtower
+    python run.py --dataset berlin1_potsdamer_platz
+    python run.py --dataset berlin2_gendarmenmarkt
+    python run.py --dataset frankfurt1_maintower
+    python run.py --dataset frankfurt2_westendtower
 """
 import os
 import sys
@@ -22,11 +23,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp-name', type=str, default=None,
                         help='Experiment name (e.g., exp_001)')
+    parser.add_argument('--epochs', type=int, default=None,
+                        help='Override NUM_EPOCHS')
     parser.add_argument('--dataset', type=str, required=True,
                         help='Dataset name (e.g., berlin1_potsdamer_platz)')
     args = parser.parse_args()
 
-    config = get_config(DATASETS=[args.dataset], USE_TENSORBOARD=False)
+    config = get_config(DATASETS=[args.dataset])
     config.ensure_dirs()
 
     print("=" * 60)
@@ -44,5 +47,5 @@ if __name__ == '__main__':
     print(f"Step 2: Starting {config.NUM_EPOCHS}-epoch training")
     print("=" * 60)
 
-    from GAT_V2026 import main
-    main(dataset_name=args.dataset, exp_name=args.exp_name)
+    from GAT_V2025 import main
+    main(dataset_name=args.dataset, exp_name=args.exp_name, num_epochs=args.epochs)

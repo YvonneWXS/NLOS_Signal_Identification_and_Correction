@@ -1,4 +1,4 @@
-ï»¿"""
+"""
 Configuration Module
 ======================================
 Centralized management of all training and data processing configurations.
@@ -18,7 +18,7 @@ class Config:
 
     PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "processedData")
 
-    RESULT_DIR = os.path.join(PROJECT_ROOT, "model", "part1_GAT", "result")
+    RESULT_DIR = os.path.join(PROJECT_ROOT, "model", "part1_GAT", "results")
 
     SOURCE_DIR = os.path.join(PROJECT_ROOT, "model", "part1_GAT",
                               "RadioGAT-Multi-band-Radiomap-Reconstruction")
@@ -97,9 +97,9 @@ class Config:
     LAMBDA_BCE_FINAL = 0.6  # Fix 6C: minimum BCE weight at end of training
     P_LOS_LR_MULTIPLIER = 6  # Fix 6C: reduced from 10x (5e-4 -> 3e-4)
     AUTO_POS_WEIGHT = True  # Fix 6D: auto-compute pos_weight from dataset NLOS ratio
-    LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001â†’0.01
-    SIGMA_GAP_TARGET = 0.5  # increased: 0.3â†’0.5 km
-    LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0â†’5.0
+    LAMBDA_SIGMA_REG = 0.01  # 10x stronger: 0.001¡ú0.01
+    SIGMA_GAP_TARGET = 0.5  # increased: 0.3¡ú0.5 km
+    LAMBDA_SIGMA_SEP = 5.0  # stronger: 2.0¡ú5.0
 
     # ========== Graph Construction Config ==========
     AZIMUTH_THRESHOLD = 90
@@ -133,8 +133,8 @@ class Config:
     # Keys override Config attributes for specific datasets.
     DATASET_OVERRIDES = {
         'frankfurt1_maintower': {
-            'LAMBDA_ENTROPY': 0.005,        # lower entropy reg â†’ allow more extreme p_los
-            'SIGMA_NLOS_CLAMP_LOG_MAX': 3.5,  # increase sigma_nlos ceiling (exp 3.5 â‰ˆ 33 km)
+            'LAMBDA_ENTROPY': 0.005,        # lower entropy reg ¡ú allow more extreme p_los
+            'SIGMA_NLOS_CLAMP_LOG_MAX': 3.5,  # increase sigma_nlos ceiling (exp 3.5 ¡Ö 33 km)
             'LAMBDA_SIGMA_REG': 0.02,       # stronger sigma regularization to prevent explosion
             'SIGMA_GAP_TARGET': 1.0,        # larger sigma gap target (was 0.5)
         },

@@ -1,4 +1,4 @@
-﻿import os, sys, json, pickle, time
+import os, sys, json, pickle, time
 import numpy as np
 
 FUSION_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7,7 +7,7 @@ sys.path.insert(0, FUSION_DIR)
 sys.path.insert(0, M1_DIR)
 sys.path.insert(0, os.path.dirname(FUSION_DIR))
 
-from fusion.utils import load_epoch_data, compute_satellite_positions, load_mog_model, run_mog_inference
+from utils import load_epoch_data, compute_satellite_positions, load_mog_model, run_mog_inference
 
 CACHE_DIR = os.path.normpath(os.path.join(FUSION_DIR, '..', '..', 'cache'))
 DATASETS = ['berlin1_potsdamer_platz', 'berlin2_gendarmenmarkt', 'frankfurt1_maintower', 'frankfurt2_westendtower']

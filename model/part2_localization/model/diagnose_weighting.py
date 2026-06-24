@@ -5,8 +5,8 @@ sys.path.insert(0, _MODEL_DIR)
 sys.path.insert(0, os.path.dirname(_MODEL_DIR))
 sys.path.insert(0, r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\model")
 
-from fusion.utils import load_epoch_data, load_mog_model, run_mog_inference, compute_satellite_positions
-from fusion.baselines import solve_standard_ls, solve_wls_mog
+from utils import load_epoch_data, load_mog_model, run_mog_inference, compute_satellite_positions
+from baselines import solve_standard_ls, solve_wls_mog
 
 RESULT_DIR = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part2_FactorGraphLocalizationFusion\result"
 CACHE_DIR = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part2_FactorGraphLocalizationFusion\cache"

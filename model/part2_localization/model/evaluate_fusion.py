@@ -1,4 +1,4 @@
-# fusion/evaluate_fusion.py v2 â€” 6 methods, detailed metrics
+# fusion/evaluate_fusion.py v2 â€?6 methods, detailed metrics
 # ============================================================
 # Methods: Standard LS, WLS-elevation, WLS-MoG, Hard-threshold,
 #          FactorGraph-MoG, FactorGraph-MoG+2A (if TCN available)
@@ -6,16 +6,16 @@
 import os, sys, json, time, numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fusion.baselines import (solve_standard_ls, solve_wls_elevation,
+from baselines import (solve_standard_ls, solve_wls_elevation,
                                 solve_wls_mog, solve_hard_threshold,
                                 solve_wls_aggressive_power, solve_wls_log_odds,
                                 solve_wls_soft_floor, solve_wls_geometry_aware,
                                 solve_wls_debiased, solve_raim_mog)
-from fusion.utils import fit_platt_scaling, apply_platt_scaling
-from fusion.factor_graph_fusion import FactorGraphPositioner
-from fusion.prnc import PRNCPositioner
-from fusion.los_anchored_ls import LOS_ANCHORED_METHODS
-from fusion.utils import compute_satellite_positions
+from utils import fit_platt_scaling, apply_platt_scaling
+from factor_graph_fusion import FactorGraphPositioner
+from prnc import PRNCPositioner
+from los_anchored_ls import LOS_ANCHORED_METHODS
+from utils import compute_satellite_positions
 
 
 def compute_2d_error(est_ecef, gt_ecef):
@@ -336,7 +336,7 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
         tcn_path = os.path.join(tcn_models_dir, f'tcn_{dataset_name}.pth')
         if os.path.exists(tcn_path):
             import torch
-            from fusion.train_tcn import SimpleTCN
+            from train_tcn import SimpleTCN
             tcn = SimpleTCN(63, 64, 20, 10)
             ckpt = torch.load(tcn_path, map_location='cpu', weights_only=False)
             # Handle both raw state_dict and dict-wrapped checkpoints
@@ -482,7 +482,7 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     # [v7] Method 12: Debiased-WLS-v2 (corrected mu, no geometry selection)
     # ============================================================
     print('  [v7-1/4] Debiased-WLS-v2 ...')
-    from fusion.baselines import solve_debiased_wls_v2
+    from baselines import solve_debiased_wls_v2
     err_2d, err_3d = [], []
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
         if mog is None or len(sv_positions_all[i]) < 4:
@@ -506,7 +506,7 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     # [v7] Method 13: Geometry-Aware-Debiased-WLS
     # ============================================================
     print('  [v7-2/4] Geometry-Aware-Debiased-WLS ...')
-    from fusion.baselines import solve_geometry_aware_debiased_wls
+    from baselines import solve_geometry_aware_debiased_wls
     err_2d, err_3d = [], []
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
         if mog is None or len(sv_positions_all[i]) < 4:
@@ -530,7 +530,7 @@ def evaluate_all_methods(all_epochs_data, mog_outputs, dataset_name, result_dir)
     # [v7] Method 14: PRNC-mu-corrected
     # ============================================================
     print('  [v7-3/4] PRNC-mu-corrected ...')
-    from fusion.prnc import solve_prnc_mu_corrected
+    from prnc import solve_prnc_mu_corrected
     err_2d, err_3d = [], []
     for i, (ep, mog) in enumerate(zip(all_epochs_data, mog_outputs)):
         if mog is None or len(sv_positions_all[i]) < 4:
@@ -586,7 +586,7 @@ def generate_report_table(all_results, output_path):
     methods = list(all_results[datasets[0]].keys())
     
     lines = ['# Module 2 v2 Positioning Results', '',
-             '## CEP50 (m) â€” Median 2D Error', '']
+             '## CEP50 (m) â€?Median 2D Error', '']
     hdr = '| Method | ' + ' | '.join(datasets) + ' |'
     lines.append(hdr); lines.append('|' + '|'.join(['------'] * (len(datasets) + 1)) + '|')
     for m in methods:

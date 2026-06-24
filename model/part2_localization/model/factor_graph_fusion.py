@@ -1,20 +1,20 @@
 # fusion/factor_graph_fusion.py v3
 # ================================================================
-# P0.1: Smooth gradient â€” replace all np.clip/maximum with smooth approx
-# P1.1: Per-epoch diagnostics â€” NLL improvement/degradation tracking
-# P2:   Multi-optimizer support â€” L-BFGS-B, trust-ncg, Newton-CG
+# P0.1: Smooth gradient â€?replace all np.clip/maximum with smooth approx
+# P1.1: Per-epoch diagnostics â€?NLL improvement/degradation tracking
+# P2:   Multi-optimizer support â€?L-BFGS-B, trust-ncg, Newton-CG
 # ================================================================
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import logsumexp
-from fusion.baselines import solve_wls_mog, solve_wls_elevation, solve_standard_ls
+from baselines import solve_wls_mog, solve_wls_elevation, solve_standard_ls
 
 
 # ---- Smooth approximations (P0.1) ----
 def _smooth_max(x, lo, k=5.0):
     '''Smooth version of max(x, lo). Numerically stable.'''
     t = k * (x - lo)
-    # for large t: log(1+exp(t)) â‰ˆ t, for small t: use softplus
+    # for large t: log(1+exp(t)) â‰?t, for small t: use softplus
     return lo + np.where(t > 20.0, t, np.log(1.0 + np.exp(np.clip(t, -50.0, 50.0)))) / k
 
 def _smooth_min(x, hi, k=5.0):
@@ -38,7 +38,7 @@ class MoGObservationModel:
         self.log_p_nlos = np.log(1.0 - self.p_los)
 
     def log_likelihood_smooth(self, residuals):
-        '''Smooth MoG log-likelihood â€” no hard clips.'''
+        '''Smooth MoG log-likelihood â€?no hard clips.'''
         los_comp = (self.log_p_los
                     - 0.5 * (residuals / self.sigma_los) ** 2
                     - np.log(self.sigma_los))
@@ -101,7 +101,7 @@ class MoGObservationModel:
         
         # Outlier damping: smoothly reduce gradient for |res| > 3*sigma_nlos
         z_score = np.abs(residuals) / np.maximum(self.sigma_nlos, 0.1)
-        # Stable sigmoid: at z>>3 â†’ 0.3, at z=0 â†’ 1.0
+        # Stable sigmoid: at z>>3 â†?0.3, at z=0 â†?1.0
         x = 5.0 * (z_score - 3.0)
         # numerically stable: clip x to prevent overflow
         x_safe = np.clip(x, -50.0, 50.0)
@@ -245,7 +245,7 @@ class FactorGraphPositioner:
         pr_corrected = pr_measured - predicted_bias
         
         # Step 2: WLS-debiased initial solution
-        from fusion.baselines import solve_wls_debiased
+        from baselines import solve_wls_debiased
         x_wls_db = solve_wls_debiased(sv_positions, pr_measured, p_los, sigma_los, mu_nlos)
         
         # Step 3: Quick L-BFGS-B refinement (2-3 iters only)

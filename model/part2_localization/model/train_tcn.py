@@ -1,4 +1,4 @@
-# fusion/train_tcn.py â€” P1.2: Train 2A TCN prior predictor
+# fusion/train_tcn.py â€?P1.2: Train 2A TCN prior predictor
 # ==========================================================
 # Uses Module 1 MoG outputs as soft labels for NLOS prediction.
 # Trains one TCN per dataset.
@@ -9,8 +9,8 @@ _MODEL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _MODEL_DIR)
 sys.path.insert(0, r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part1_GAT\model")
 
-from fusion.motion_geometry_predictor import MotionGeometryPredictor
-from fusion.utils import load_epoch_data, load_mog_model, run_mog_inference
+from motion_geometry_predictor import MotionGeometryPredictor
+from utils import load_epoch_data, load_mog_model, run_mog_inference
 
 # ---- Config ----
 MAX_SV = 20

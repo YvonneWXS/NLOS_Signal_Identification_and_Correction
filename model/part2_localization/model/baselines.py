@@ -1,4 +1,4 @@
-# fusion/baselines.py v2 â€” 4 baseline positioning methods
+# fusion/baselines.py v2 â€?4 baseline positioning methods
 # =========================================================
 # Jacobian: H[:,:3] = -LOS  (verified in debug_geometry.py)
 #            H[:,3]  = +1.0
@@ -253,7 +253,7 @@ def solve_geometry_aware_debiased_wls(sv_positions, pr_measured, p_los, sigma_lo
     Step 4: WLS with weights p_los/sigma^2 on selected+debiased sats.
     Step 5: Iterate steps 2-4 until convergence.
     """
-    from fusion.los_anchored_ls import select_satellites_geometry_aware
+    from los_anchored_ls import select_satellites_geometry_aware
 
     p_nlos = 1.0 - p_los
     pr_corrected = pr_measured - p_nlos * mu_nlos

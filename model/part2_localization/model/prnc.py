@@ -12,7 +12,7 @@ Methods:
 """
 
 import numpy as np
-from fusion.baselines import solve_standard_ls
+from baselines import solve_standard_ls
 
 
 class PRNCPositioner:
@@ -111,7 +111,7 @@ def solve_prnc_mu_corrected(pr_mes, sv_positions, p_los, sigma_los, mu_nlos, max
     nlos_mask = p_los < 0.3
     if los_mask.sum() > 0 and nlos_mask.sum() > 0:
         if mu_nlos[los_mask].mean() > mu_nlos[nlos_mask].mean():
-            from fusion.baselines import solve_standard_ls
+            from baselines import solve_standard_ls
             return solve_standard_ls(sv_positions, pr_mes)
 
     correction = p_nlos * mu_nlos

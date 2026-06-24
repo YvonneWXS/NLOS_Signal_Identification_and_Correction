@@ -1,6 +1,6 @@
 import os, sys, pickle, json, numpy as np
 sys.path.insert(0, r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part2_FactorGraphLocalizationFusion\model")
-from fusion.utils import load_epoch_data, compute_satellite_positions
+from utils import load_epoch_data, compute_satellite_positions
 
 CACHE = r"D:\3_document\4_research\NLOS Signal Identification and Correction\model\part2_FactorGraphLocalizationFusion\cache"
 DATASETS = ["berlin1_potsdamer_platz","berlin2_gendarmenmarkt","frankfurt1_maintower","frankfurt2_westendtower"]
