@@ -1,0 +1,32 @@
+﻿# module3_adaptive/config.yaml — Module 3: Adaptive Selection
+
+adaptive_selector:
+  window_size: 50
+  min_history: 15
+
+thresholds:
+  fg_threshold: 0.65
+  wls_threshold: 0.50
+
+scene_quality:
+  weight_plos_gap: 0.33
+  weight_pdop_ratio: 0.33
+  weight_nlos_redundancy: 0.34
+  plos_gap_threshold: 0.4
+  pdop_ratio_threshold: 1.1
+  nlos_redundancy_threshold: 3
+
+fallback:
+  enabled: true
+  fallback_ratio: 1.05
+
+residual_tracking:
+  enabled: true
+  innovation_alpha: 0.5
+
+methods:
+  primary:
+    - standard_ls
+    - wls_elevation
+    - wls_mog
+    - factor_graph

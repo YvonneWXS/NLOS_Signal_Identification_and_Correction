@@ -1,0 +1,46 @@
+﻿# module2_localization/config.yaml — Module 2: Fusion Localization
+
+methods:
+  - standard_ls
+  - wls_elevation
+  - wls_mog
+  - hard_threshold
+  - factor_graph
+  - cno_weighted
+  - snr_weighted
+  - raim
+  - irls
+  - ekf
+  - dnn_e2e
+  - gat_e2e
+  - ins_gnss
+
+hard_threshold:
+  threshold: 0.5
+
+raim:
+  chi2_threshold: 3.0
+  max_exclusions: 3
+
+irls:
+  huber_k: 1.5
+  max_iter: 20
+  tol: 0.0001
+
+ekf:
+  process_noise_pos: 1.0
+  process_noise_vel: 0.1
+  measurement_noise: 5.0
+
+factor_graph:
+  multistart: 3
+  max_iter: 100
+
+evaluation:
+  metrics:
+    - cep50
+    - cep95
+    - rmse
+    - mae
+    - median_error
+    - std_error
