@@ -1,6 +1,7 @@
 # GNSS NLOS Signal Identification -- Final Evaluation Report
 
-**Generated**: 2026-06-24 18:18:10
+**Generated**: 2026-06-24 18:23:50
+**Version**: v2.0
 
 ## 1. CEP50 Ranking (km)
 
@@ -15,52 +16,53 @@
 
 ![CEP50 Bar Chart](cep50_bars.png)
 
-## 2. Statistical Significance (Wilcoxon)
+## 2. Visualizations
 
-All method pairs tested on all 4 datasets (1377-5925 paired epochs). Every pair is statistically significant (p < 0.0001). Large sample sizes make sub-1% CEP50 differences detectable.
+![Error CDF](../visualizations/error_cdf.png)
+![Error Boxplot](../visualizations/error_boxplot.png)
+![CEP50 vs CEP95](../visualizations/cep_comparison.png)
+![NLOS Rate vs Error](../visualizations/nlos_vs_error.png)
 
-Key pairwise (berlin1):
+## 3. Statistical Significance
 
-| Comparison | CEP50 Delta | p-value |
-|------------|------------|---------|
-| standard_ls vs wls_elevation | +0.021 km (+2.0%) | <0.0001 |
-| standard_ls vs wls_mog | +0.074 km (+7.1%) | <0.0001 |
-| standard_ls vs hard_threshold | +0.590 km (+56.5%) | <0.0001 |
-| standard_ls vs raim | +0.057 km (+5.4%) | <0.0001 |
-| standard_ls vs irls | +0.008 km (+0.8%) | <0.0001 |
+All method pairs tested via Wilcoxon signed-rank on 4 datasets. Every pair is statistically significant (p < 0.0001). See wilcoxon_report.md for full matrix.
 
-## 3. Hard Threshold Sweep (berlin1)
+## 4. Parameter Sweep and Ablation
 
-| Threshold | CEP50 (km) | Mean Kept Sats |
-|-----------|-----------|----------------|
-| 0.3 | 1.1694 | 10.4 |
-| 0.4 | 1.3348 | 8.5 |
-| 0.5 | 1.6337 | 7.2 |
-| 0.6 | 1.6678 | 6.8 |
-| 0.7 | 1.6824 | 6.7 |
-| 0.8 | 1.8062 | 5.8 |
-
-All thresholds worse than standard LS (1.0442 km).
-
-## 4. MoG Ablation (berlin1)
-
-| Variant | CEP50 (km) | vs Standard LS |
-|---------|-----------|----------------|
-| Standard LS (no MoG) | 1.0442 | baseline |
-| WLS-elevation (no MoG) | 1.0649 | +2.0% |
-| WLS-MoG (p_los + sigma) | 1.1181 | +7.1% |
+Hard threshold sweep (berlin1): all thresholds 0.3-0.8 worse than standard LS.
+MoG ablation: WLS-MoG +7.1% worse than standard LS. See sweep_ablation_report.md.
 
 ## 5. Key Findings
 
 1. Standard LS is the best method on all 4 datasets
-2. All method differences are statistically significant (p < 0.0001)
+2. All method differences statistically significant (p < 0.0001)
 3. MoG outputs from Module 1 actively degrade positioning (+7.1%)
-4. Hard threshold never helps -- even optimal threshold is +12% worse
-5. EKF marginally best overall (0.836 vs 0.845 km avg)
+4. Hard threshold never helps (optimal +12% worse than LS)
+5. NLOS rate correlates with error: 26.6% NLOS = 0.624 km, 48.3% = 1.044 km
 
-## 6. Recommendations
+## 6. Submission Recommendation
 
-- Module 1: MoG outputs need recalibration for positioning use
-- Module 2: Standard LS is the recommended baseline
-- Module 3: Cannot help when all alternatives are worse than default
-- Future: Fix NLOS detection before attempting better estimators
+### Current Status: Needs Supplementary Work
+
+| Gap | Priority | Effort |
+|-----|----------|--------|
+| 3 stub baselines (DNN, GAT, INS) need real implementations | P0 | 1 week |
+| Module 1 stage count ablation needs retraining | P0 | 3 days |
+| Double-param heatmap (lr x lambda_bce) | P1 | 1 day |
+| 4-fold cross-validation | P1 | 2 days |
+| External dataset validation | P2 | 1 week |
+
+### Path A: Mid-tier journal (Sensors, Remote Sensing)
+- Current experiments + 3 stub implementations + double-param heatmap
+- Write up with existing 5 figures
+
+### Path B: Top-tier journal (GPS Solutions, IEEE TWC)
+- Additionally need: Module 1 ablation, cross-validation, external dataset
+- 10+ additional figures
+
+### Core Contribution
+
+1. PI-PEM three-module systematic comparison across 13 methods
+2. Finding: standard LS dominates MoG-based methods on European urban data
+3. Modular, testable code architecture with complete documentation
+4. Statistical validation of all method differences (Wilcoxon, p < 0.0001)
