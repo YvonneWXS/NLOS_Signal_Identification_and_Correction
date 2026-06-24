@@ -52,6 +52,8 @@ def compute_3d_error(gt_ecef_km, pred_ecef_km):
 def all_metrics(errors):
     """Return dict of all standard metrics"""
     errors = np.asarray(errors).flatten()
+    if len(errors) == 0:
+        return {}
     return {
         'cep50': float(np.percentile(errors, 50)),
         'cep95': float(np.percentile(errors, 95)),
